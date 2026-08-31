@@ -1,0 +1,58 @@
+{
+  "measured_at": "2026-08-31T22:44:44.831444+00:00",
+  "database": "energia_medicao",
+  "measurements": 58820400,
+  "meters": 19980,
+  "days": 30,
+  "runs": 30,
+  "network_floor_ms": {
+    "p50": 8.5,
+    "p95": 13.0,
+    "min": 7.5,
+    "max": 25.9
+  },
+  "cases": {
+    "curva_1_dia": {
+      "p50": 11.5,
+      "p95": 13.8,
+      "min": 10.9,
+      "max": 14.3
+    },
+    "curva_1_dia_preenchida": {
+      "p50": 12.2,
+      "p95": 12.7,
+      "min": 11.5,
+      "max": 13.5
+    },
+    "curva_30_dias": {
+      "p50": 16.3,
+      "p95": 18.1,
+      "min": 15.8,
+      "max": 20.3
+    },
+    "balanco_1_dia": {
+      "p50": 19.2,
+      "p95": 22.5,
+      "min": 18.2,
+      "max": 32.2
+    },
+    "balanco_7_dias": {
+      "p50": 69.9,
+      "p95": 85.8,
+      "min": 65.6,
+      "max": 88.2
+    },
+    "balanco_30_dias": {
+      "p50": 336.9,
+      "p95": 511.3,
+      "min": 314.6,
+      "max": 655.2
+    }
+  },
+  "storage": {
+    "storage_bytes": 464474112,
+    "index_bytes": 80363520,
+    "bytes_per_measurement": 7.9,
+    "buckets": 612720
+  }
+}
