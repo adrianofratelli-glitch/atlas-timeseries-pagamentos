@@ -152,6 +152,52 @@ def main() -> int:
         status, _ = call("/api/cases", method="POST", payload=payload)
         check(f"{nome} recusado com 422", status == 422, str(status))
 
+    print("\ningestão ao vivo")
+    call("/api/live/clear", method="POST")
+    status, st = call("/api/live/start", method="POST",
+                      payload={"transformer_id": severo["transformer_id"]})
+    check("ingestão inicia", status == 200 and st["state"] == "rodando", str(st))
+    time.sleep(6)
+    status, st = call("/api/live/status")
+    check("ingestão grava medições", st["written"] > 0, str(st["written"]))
+    check("ingestão sem erro", st["last_error"] is None, str(st["last_error"]))
+
+    status, vivo = call("/api/balance", {"transformer_id": severo["transformer_id"],
+                                         "live": "true"})
+    check("balanço ao vivo lê readings_live",
+          vivo.get("collection") == "readings_live" and len(vivo["points"]) > 0,
+          f'{vivo.get("collection")} {len(vivo.get("points", []))}')
+    check("ao vivo agrega em segundos",
+          vivo["granularity"]["unit"] == "second", str(vivo["granularity"]))
+
+    status, _ = call("/api/live/start", method="POST",
+                     payload={"transformer_id": "TR-INEXISTENTE"})
+    check("transformador inexistente recusado com 404", status == 404, str(status))
+
+    status, st = call("/api/live/stop", method="POST")
+    check("ingestão para", st["state"] == "parado", str(st["state"]))
+
+    # A TTL é a razão de existir da coleção separada: sem ela o roteiro não roda
+    # duas vezes no mesmo dia sem limpeza manual.
+    from pymongo import MongoClient  # noqa: PLC0415 — só o teste precisa do driver
+    import os as _os
+    uri = None
+    for linha in open(_os.path.join(_os.path.dirname(_os.path.dirname(
+            _os.path.abspath(__file__))), ".env")):
+        if linha.startswith("MONGODB_URI="):
+            uri = linha.split("=", 1)[1].strip()
+    cli = MongoClient(uri)
+    banco = cli[_os.getenv("MONGODB_DB", "energia_medicao")]
+    opcoes = next((c.get("options", {}) for c in banco.list_collections()
+                   if c["name"] == "readings_live"), {})
+    check("readings_live tem TTL", opcoes.get("expireAfterSeconds", 0) > 0,
+          str(opcoes.get("expireAfterSeconds")))
+    check("readings_live é time series", "timeseries" in opcoes, str(list(opcoes)))
+    cli.close()
+
+    status, st = call("/api/live/clear", method="POST")
+    check("limpeza remove o dado ao vivo", st["written"] == 0, str(st["written"]))
+
     if not args.quick:
         print("\nchange stream")
         recebidos: list[dict] = []
@@ -202,7 +248,10 @@ def main() -> int:
               ok + recusadas == len(respostas), f"{ok} ok / {recusadas} 429")
         print(f"       24 chamadas em {elapsed:.1f}s — {ok} ok, {recusadas} recusadas")
 
-    call("/api/demo/reset", method="POST")
+    status, reset = call("/api/demo/reset", method="POST")
+    check("reset também limpa a ingestão ao vivo",
+          reset.get("ao_vivo", {}).get("state") == "parado", str(reset.get("ao_vivo")))
+
     print(f"\n{passou} passaram, {len(falhas)} falharam")
     for f in falhas:
         print(f"  - {f}")

@@ -15,6 +15,7 @@ registry stays out of the measurement document, is in
 | `loss_scenarios` | normal | ground truth of the seeded non-technical loss | idem |
 | `investigations` | normal | cases opened by the ACID transaction | backend |
 | `loss_alerts` | normal | change stream fires | backend |
+| `readings_live` | **time series** | live ingestion, TTL of one hour | backend |
 | `dataset_info` | normal | first and last measurement of each load | `generate_readings.py` |
 
 ### The measurement
@@ -145,6 +146,33 @@ ran.
 5. **Hot plus cold** — the same load curve against a federated database spanning the
    live collection and the Online Archive, so one query answers across both. Gated by
    `ARCHIVE_ENABLED`.
+
+## The live collection
+
+```js
+db.createCollection("readings_live", {
+  timeseries: { timeField: "ts", metaField: "meta",
+                bucketMaxSpanSeconds: 300, bucketRoundingSeconds: 300 },
+  expireAfterSeconds: 3600
+})
+```
+
+Same document shape as `readings`, three deliberate differences:
+
+- **Separate collection.** The historical base is checked against ground truth on
+  screen. Writing new measurements into it during a demo would pull the measured gap
+  away from the expected one, which is exactly the number the presenter just promised
+  would match.
+- **A five-minute bucket**, against a day in the historical collection. Here the goal is
+  watching data arrive and expire, not storage density — and the measurements arrive one
+  second apart in wall-clock time.
+- **`expireAfterSeconds: 3600`.** This is what lets the script run more than once a day
+  with no manual cleanup. It is also the honest demonstration of TTL on a time series
+  collection: the bucket disappears when its newest measurement passes the deadline.
+
+The balance and curve queries take a `live` flag and read this collection with a
+five-second `$dateTrunc` instead of an hour — one hour of TTL grouped by hour is a
+single point.
 
 ## The transaction
 

@@ -82,6 +82,17 @@ makes it possible to change driver or server version without touching the routes
 12. **POST bodies go through a `pydantic` schema, not manual checks.** Ranges,
     limits and identifiers are validated before they reach a pipeline.
 
+13. **Live ingestion never touches `readings`.** The play button feeds
+    `readings_live`, a separate time series collection with a one-hour TTL. The
+    historical base is the evidence checked against ground truth; injecting new
+    measurements into it mid-demo would make the measured gap drift away from the
+    expected one while the customer watches.
+
+14. **Live measurements carry real timestamps.** The simulated clock only picks the
+    *shape* of the curve. Stamping the simulated time — which continues where the
+    historical base ends, already hours in the past — made the TTL delete the live
+    series within a minute.
+
 ## Environment variables
 
 | Variable | Default | Role |
@@ -93,6 +104,9 @@ makes it possible to change driver or server version without touching the routes
 | `TS_MAX_POINTS` | `4000` | points returned per series after truncation |
 | `LOSS_THRESHOLD_PCT` | `8` | gap that makes a transformer suspicious |
 | `LOSS_MIN_WINDOWS` | `6` | consecutive windows above the threshold before a case |
+| `LIVE_TTL_SECONDS` | `3600` | how long live measurements survive |
+| `LIVE_TICK_SECONDS` | `1.0` | wall-clock seconds per tick |
+| `LIVE_MINUTES_PER_TICK` | `30` | simulated minutes written per tick |
 | `ARCHIVE_ENABLED` | `false` | turns the lifecycle panel on |
 | `PORT_BACKEND` | `8400` | |
 | `PORT_FRONTEND` | `5400` | |

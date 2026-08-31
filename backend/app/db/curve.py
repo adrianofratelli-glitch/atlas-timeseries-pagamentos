@@ -18,10 +18,13 @@ from .client import db, with_retry
 from .ranges import label, resolve
 
 
-def pipeline(meter_id: str, start: datetime, end: datetime, unit: str, size: int,
-             fill: bool) -> list[dict]:
+def pipeline(meter_id: str, start: datetime | None, end: datetime | None, unit: str,
+             size: int, fill: bool) -> list[dict]:
+    match: dict = {"meta.meter_id": meter_id}
+    if start and end:
+        match["ts"] = {"$gte": start, "$lt": end}
     pipe: list[dict] = [
-        {"$match": {"meta.meter_id": meter_id, "ts": {"$gte": start, "$lt": end}}},
+        {"$match": match},
         {"$group": {
             "_id": {"$dateTrunc": {"date": "$ts", "unit": unit, "binSize": size}},
             "kwh": {"$sum": "$kwh"},
@@ -32,7 +35,7 @@ def pipeline(meter_id: str, start: datetime, end: datetime, unit: str, size: int
         {"$set": {"ts": "$_id", "measured": True}},
         {"$sort": {"ts": 1}},
     ]
-    if fill:
+    if fill and start and end:
         pipe += [
             {"$densify": {"field": "ts",
                           "range": {"step": size, "unit": unit, "bounds": [start, end]}}},
@@ -56,14 +59,26 @@ def pipeline(meter_id: str, start: datetime, end: datetime, unit: str, size: int
     return pipe
 
 
-def load_curve(meter_id: str, days: float, fill: bool) -> dict:
-    start, end, unit, size = resolve(days)
+def load_curve(meter_id: str, days: float, fill: bool, live: bool = False) -> dict:
+    if live:
+        # Sem faixa e sem $fill: ao vivo não há lacuna a reconstruir, e a TTL de
+        # `readings_live` já delimita o que existe.
+        # Bins de 5 s: ao vivo o eixo é o relógio real (~1 s por tick), então
+        # agrupar por minuto devolvia um ponto só nos primeiros minutos.
+        start = end = None
+        unit, size = "second", 5
+    else:
+        start, end, unit, size = resolve(days)
     pipe = pipeline(meter_id, start, end, unit, size, fill)
-    points = with_retry(lambda: list(db().readings.aggregate(pipe, maxTimeMS=MAX_TIME_MS)))
+    colecao = "readings_live" if live else "readings"
+    points = with_retry(lambda: list(db()[colecao].aggregate(pipe, maxTimeMS=MAX_TIME_MS)))
     filled = sum(1 for p in points if p.get("filled"))
     return {
         "meter_id": meter_id,
-        "from": start, "to": end,
+        "live": live,
+        "collection": colecao,
+        "from": points[0]["ts"] if live and points else start,
+        "to": points[-1]["ts"] if live and points else end,
         "granularity": {"unit": unit, "bin_size": size, "label": label(unit, size)},
         "points": points,
         "point_count": len(points),

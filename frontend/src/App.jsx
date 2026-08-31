@@ -42,6 +42,9 @@ export default function App() {
   const [alertas, setAlertas] = useState([])
   const [casos, setCasos] = useState([])
   const [ocupado, setOcupado] = useState(false)
+  const [hover, setHover] = useState(null)
+  const [live, setLive] = useState(null)
+  const [aviso, setAviso] = useState(null)
   const streamRef = useRef(null)
 
   // ---------------------------------------------------------------- carga inicial
@@ -77,23 +80,25 @@ export default function App() {
   }, [])
 
   // ---------------------------------------------------------------------- dados
-  const carregarBalanco = useCallback(async () => {
-    if (!transformerId) return
-    setOcupado(true)
-    try {
-      setBalance(await api.balance(transformerId, days))
-      setErro(null)
-    } catch (e) { setErro(e.message) } finally { setOcupado(false) }
-  }, [transformerId, days])
+  const aoVivo = live?.state === 'rodando'
 
-  const carregarCurva = useCallback(async () => {
-    if (!meterId) return
-    setOcupado(true)
+  const carregarBalanco = useCallback(async (silencioso = false) => {
+    if (!transformerId) return
+    if (!silencioso) setOcupado(true)
     try {
-      setCurve(await api.curve(meterId, days, fill))
+      setBalance(await api.balance(transformerId, days, aoVivo))
       setErro(null)
-    } catch (e) { setErro(e.message) } finally { setOcupado(false) }
-  }, [meterId, days, fill])
+    } catch (e) { setErro(e.message) } finally { if (!silencioso) setOcupado(false) }
+  }, [transformerId, days, aoVivo])
+
+  const carregarCurva = useCallback(async (silencioso = false) => {
+    if (!meterId) return
+    if (!silencioso) setOcupado(true)
+    try {
+      setCurve(await api.curve(meterId, days, fill, aoVivo))
+      setErro(null)
+    } catch (e) { setErro(e.message) } finally { if (!silencioso) setOcupado(false) }
+  }, [meterId, days, fill, aoVivo])
 
   useEffect(() => { if (modo === 'balance') carregarBalanco() }, [modo, carregarBalanco])
   useEffect(() => { if (modo === 'curva') carregarCurva() }, [modo, carregarCurva])
@@ -102,6 +107,22 @@ export default function App() {
     if (!transformerId) return
     api.meters(transformerId).then((m) => setMeters(m.meters)).catch(() => setMeters([]))
   }, [transformerId])
+
+  // Enquanto a ingestão roda, a tela repinta sozinha. Silencioso: marcar "ocupado" a
+  // cada 1,5 s faria o gráfico piscar durante a demo inteira.
+  useEffect(() => {
+    if (!aoVivo) return undefined
+    const t = setInterval(() => {
+      api.liveStatus().then(setLive).catch(() => {})
+      if (modo === 'balance') carregarBalanco(true)
+      else carregarCurva(true)
+    }, 1500)
+    return () => clearInterval(t)
+  }, [aoVivo, modo, carregarBalanco, carregarCurva])
+
+  useEffect(() => {
+    api.liveStatus().then(setLive).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (aba === 'armazenamento' && !storage) {
@@ -137,14 +158,37 @@ export default function App() {
     } catch (e) { setErro(e.message) } finally { setOcupado(false) }
   }
 
+  async function alternarLive() {
+    setOcupado(true)
+    try {
+      const st = aoVivo ? await api.liveStop() : await api.liveStart(transformerId)
+      setLive(st)
+      setAviso(aoVivo ? 'ingestão parada' : `ingestão ao vivo em ${transformerId}`)
+    } catch (e) { setErro(e.message) } finally { setOcupado(false) }
+  }
+
   async function reiniciar() {
     setOcupado(true)
     try {
-      await api.reset()
+      const r = await api.reset()
       setAlertas([])
       setCasos([])
+      setLive(r.ao_vivo ?? null)
+      setHover(null)
+      // Reiniciar sem repintar parecia não fazer nada: o backend limpava e a tela
+      // continuava mostrando o estado anterior.
+      await Promise.all([api.health().then(setHealth), api.scenarios().then(setScenarios)])
+      if (modo === 'balance') await carregarBalanco()
+      else await carregarCurva()
+      setAviso(`demo reiniciada — ${r.cases_removidos} caso(s), ${r.alertas_removidos} alerta(s) removidos`)
     } catch (e) { setErro(e.message) } finally { setOcupado(false) }
   }
+
+  useEffect(() => {
+    if (!aviso) return undefined
+    const t = setTimeout(() => setAviso(null), 4000)
+    return () => clearTimeout(t)
+  }, [aviso])
 
   const pontos = modo === 'balance' ? balance?.points ?? [] : curve?.points ?? []
   const atual = modo === 'balance' ? balance : curve
@@ -164,6 +208,7 @@ export default function App() {
           {health?.readings != null && (
             <Badge variant="blue">{health.readings.toLocaleString('pt-BR')} medições</Badge>
           )}
+          {aoVivo && <Badge variant="red">ingerindo ao vivo</Badge>}
           <Badge variant={health?.change_stream === 'ativo' ? 'green' : 'yellow'}>
             change stream: {health?.change_stream ?? '—'}
           </Badge>
@@ -174,6 +219,8 @@ export default function App() {
           </Badge>
         </div>
       </header>
+
+      {aviso && !erro && <Banner variant="info" className="erro">{aviso}</Banner>}
 
       {erro && (
         <Banner variant="danger" className="erro">
@@ -239,11 +286,37 @@ export default function App() {
           )}
 
           <div className="acoes">
+            <Button variant={aoVivo ? 'danger' : 'primaryOutline'} disabled={ocupado || !transformerId}
+                    onClick={alternarLive}>
+              {aoVivo ? '■ Parar ingestão' : '▶ Iniciar ingestão ao vivo'}
+            </Button>
             <Button variant="primary" disabled={!balance?.suspeito || ocupado} onClick={abrirCaso}>
               Abrir investigação
             </Button>
             <Button variant="default" disabled={ocupado} onClick={reiniciar}>Reiniciar demo</Button>
           </div>
+
+          {live && (live.state === 'rodando' || live.written > 0) && (
+            <div className="live-box">
+              <header>
+                <span className={`ponto${aoVivo ? ' pulsando' : ''}`} aria-hidden="true" />
+                <strong>{aoVivo ? 'ingerindo' : 'ingestão parada'}</strong>
+              </header>
+              <dl>
+                <div><dt>medições gravadas</dt><dd>{live.written.toLocaleString('pt-BR')}</dd></div>
+                <div><dt>relógio simulado</dt>
+                  <dd>{live.simulated_now
+                    ? new Date(live.simulated_now).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                    : '—'}</dd></div>
+                <div><dt>ritmo</dt><dd>{live.minutes_per_tick} min / {live.tick_seconds}s</dd></div>
+                <div><dt>TTL</dt><dd>{Math.round(live.ttl_seconds / 60)} min</dd></div>
+              </dl>
+              <small>
+                coleção <code>{live.collection}</code>, separada da base histórica e com
+                TTL — o dado ao vivo expira sozinho e o roteiro roda de novo.
+              </small>
+            </div>
+          )}
 
           {cenario && (
             <div className="verdade">
@@ -279,7 +352,19 @@ export default function App() {
               </>
             )}
             <div className="granularidade">
-              agregação do servidor: <strong>{atual?.granularity?.label ?? '—'}</strong>
+              {hover ? (
+                <span className="leitura">
+                  <strong>{new Date(hover.ts).toLocaleString('pt-BR', {
+                    day: '2-digit', month: '2-digit', hour: '2-digit',
+                    minute: '2-digit', second: atual?.granularity?.unit === 'second' ? '2-digit' : undefined,
+                  })}</strong>
+                  {modo === 'balance'
+                    ? ` · entregue ${n(hover.entregue)} · registrado ${n(hover.registrado)} · gap ${n(hover.gap_pct)}%`
+                    : ` · ${n(hover.kwh, 4)} kWh${hover.filled ? ' · reconstruído' : ''}`}
+                </span>
+              ) : (
+                <>agregação do servidor: <strong>{atual?.granularity?.label ?? '—'}</strong></>
+              )}
             </div>
           </div>
 
@@ -292,7 +377,8 @@ export default function App() {
           )}
 
           {pontos.length > 0
-            ? <Chart mode={modo === 'balance' ? 'balance' : 'curve'} points={pontos} />
+            ? <Chart mode={modo === 'balance' ? 'balance' : 'curve'} points={pontos}
+                     onHover={setHover} />
             : <div className="vazio">
                 {carregando || ocupado
                   ? 'consultando o cluster…'

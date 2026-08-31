@@ -32,6 +32,18 @@ this. The storage comparison in step 1 is MongoDB against MongoDB — a time ser
 collection against a plain one, same data — which is a fact about the bucket format,
 not a claim about anyone else's product.
 
+**The live ingestion is a demonstration device, not a throughput test.** The play
+button runs a single background thread inside the API writing a few hundred documents
+per tick from the same synthetic model. It exists so the audience can watch measurements
+arrive, age and expire — not to characterise ingestion capacity. The sustained-ingest
+numbers in `queries/benchmarks.md` come from the bulk loader, and neither is a
+head-to-head against a streaming pipeline.
+
+A second caveat worth saying out loud: the gap shown while live is computed over
+whatever slice of the simulated day has been generated so far, so it moves around the
+seeded expectation until a full cycle has passed. The verified number is the historical
+one.
+
 **Real meters.** Fully synthetic data. The load curves are shaped to be recognisable to
 someone from the sector, but no real consumption profile, no real distributor, and no
 real loss statistic is behind them. The business case in `docs/business-case.md` says

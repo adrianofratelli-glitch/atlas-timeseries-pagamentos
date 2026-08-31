@@ -28,8 +28,14 @@ export const api = {
   transformers: () => get('/api/transformers'),
   meters: (id) => get(`/api/transformers/${id}/meters`),
   scenarios: () => get('/api/scenarios'),
-  curve: (meterId, days, fill) => get('/api/curve', { meter_id: meterId, days, fill }),
-  balance: (transformerId, days) => get('/api/balance', { transformer_id: transformerId, days }),
+  curve: (meterId, days, fill, live) =>
+    get('/api/curve', { meter_id: meterId, days, fill, live }),
+  balance: (transformerId, days, live) =>
+    get('/api/balance', { transformer_id: transformerId, days, live }),
+  liveStart: (transformerId) => post('/api/live/start', { transformer_id: transformerId }),
+  liveStop: () => post('/api/live/stop'),
+  liveClear: () => post('/api/live/clear'),
+  liveStatus: () => get('/api/live/status'),
   storage: () => get('/api/storage'),
   cases: () => get('/api/cases'),
   openCase: (payload) => post('/api/cases', payload),

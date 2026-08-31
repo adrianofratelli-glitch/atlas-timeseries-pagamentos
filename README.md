@@ -54,7 +54,16 @@ reloading anything.
 
 ![Investigation INV-BDD78A45F8 listed in the inspector and the same case arriving in the alert strip through the change stream](docs/screenshots/06-caso-acid-alerta.png)
 
-**6 · The lifecycle**
+**6 · Live ingestion**
+Press play and the series grows on screen. A background feed writes real measurements
+into `readings_live` — a separate time series collection with a one-hour TTL — while
+the balance repaints every 1.5 s and the gap opens in front of the room. The TTL is the
+point: the data expires on its own, so the script runs again an hour later with nothing
+to clean up.
+
+![Live ingestion running: badge in the topbar, panel showing measurements written and the simulated clock, and the balance chart advancing in five-second bins](docs/screenshots/07-ingestao-ao-vivo.png)
+
+**7 · The lifecycle**
 `expireAfterSeconds` on the hot collection, Online Archive for the cold years, one
 query reading across both.
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -14,82 +14,100 @@ const CORES = {
 }
 
 function fmt(ts) {
-  return new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return new Date(ts).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
 }
 
-export default function Chart({ mode, points, minHeight = 240 }) {
+function montarDados(mode, points) {
+  const x = points.map((p) => new Date(p.ts).getTime() / 1000)
+  if (mode === 'balance') {
+    return [x, points.map((p) => p.entregue), points.map((p) => p.registrado)]
+  }
+  // Ponto reconstruído nunca parece medido: série própria, tracejada, âmbar. Os
+  // vizinhos entram nas duas séries para que as linhas se encontrem sem degrau.
+  const medido = points.map((p) => (p.filled ? null : p.kwh))
+  const preenchido = points.map((p, i) => {
+    if (p.filled) return p.kwh
+    return points[i - 1]?.filled || points[i + 1]?.filled ? p.kwh : null
+  })
+  return [x, medido, preenchido]
+}
+
+export default function Chart({ mode, points, minHeight = 240, onHover }) {
   const hostRef = useRef(null)
   const plotRef = useRef(null)
 
+  // O callback e os pontos mudam a cada render; guardados em ref, não obrigam a
+  // recriar o gráfico — recriar a cada poll de 1,5 s matava o cursor e o zoom.
+  const hoverRef = useRef(onHover)
+  hoverRef.current = onHover
+  const pointsRef = useRef(points)
+  pointsRef.current = points
+
+  const dados = useMemo(() => montarDados(mode, points), [mode, points])
+
   useEffect(() => {
-    if (!hostRef.current) return
     const host = hostRef.current
-    const x = points.map((p) => new Date(p.ts).getTime() / 1000)
+    if (!host) return undefined
 
-    let series
-    let data
-    let bands
-    if (mode === 'balance') {
-      data = [x, points.map((p) => p.entregue), points.map((p) => p.registrado)]
-      series = [
-        { label: 'instante', value: (u, v) => (v == null ? '—' : fmt(v * 1000)) },
-        { label: 'entregue (kWh)', stroke: CORES.entregue, width: 2 },
-        { label: 'registrado (kWh)', stroke: CORES.registrado, width: 2 },
-      ]
-      // A diferença é a banda entre as duas linhas: é o número que interessa, então
-      // é a forma que o olho encontra primeiro — não uma terceira linha.
-      bands = [{ series: [1, 2], fill: 'rgba(255, 105, 96, 0.22)' }]
-    } else {
-      // Ponto reconstruído nunca parece medido: série própria, tracejada, âmbar.
-      const medido = points.map((p) => (p.filled ? null : p.kwh))
-      const preenchido = points.map((p, i) => {
-        if (p.filled) return p.kwh
-        const antes = points[i - 1]
-        const depois = points[i + 1]
-        return antes?.filled || depois?.filled ? p.kwh : null
-      })
-      data = [x, medido, preenchido]
-      series = [
-        { label: 'instante', value: (u, v) => (v == null ? '—' : fmt(v * 1000)) },
-        { label: 'medido (kWh)', stroke: CORES.medido, width: 2 },
-        { label: 'reconstruído (kWh)', stroke: CORES.preenchido, width: 2, dash: [6, 4] },
-      ]
-      bands = []
-    }
-
-    // A altura vem do contêiner, não de uma constante: com altura fixa sobrava meia
-    // tela vazia embaixo do gráfico em 1600×1000.
-    // A legenda do uPlot é irmã do canvas dentro do mesmo host: sem descontar a
-    // altura dela, ela some atrás da gaveta de query.
     const ALTURA_LEGENDA = 34
     const medir = () => ({
       width: host.clientWidth || 800,
       height: Math.max((host.clientHeight || 0) - ALTURA_LEGENDA, minHeight),
     })
-    const tamanho = medir()
+
+    const series = mode === 'balance'
+      ? [
+        { label: 'instante', value: (u, v) => (v == null ? '—' : fmt(v * 1000)) },
+        { label: 'entregue (kWh)', stroke: CORES.entregue, width: 2 },
+        { label: 'registrado (kWh)', stroke: CORES.registrado, width: 2 },
+      ]
+      : [
+        { label: 'instante', value: (u, v) => (v == null ? '—' : fmt(v * 1000)) },
+        { label: 'medido (kWh)', stroke: CORES.medido, width: 2 },
+        { label: 'reconstruído (kWh)', stroke: CORES.preenchido, width: 2, dash: [6, 4] },
+      ]
 
     const opts = {
-      ...tamanho,
+      ...medir(),
       padding: [12, 12, 0, 0],
       cursor: { drag: { x: true, y: false } },
       legend: { live: true },
       series,
-      bands,
+      // A diferença é a banda entre as duas linhas: é o número que interessa, então é
+      // a forma que o olho encontra primeiro — não uma terceira linha.
+      bands: mode === 'balance' ? [{ series: [1, 2], fill: 'rgba(255, 105, 96, 0.22)' }] : [],
       axes: [
         { stroke: '#889397', grid: { stroke: 'rgba(61,79,88,0.5)' }, ticks: { stroke: '#3d4f58' } },
         { stroke: '#889397', grid: { stroke: 'rgba(61,79,88,0.35)' }, ticks: { stroke: '#3d4f58' } },
       ],
+      hooks: {
+        // Leitura do instante sob o cursor: a legenda do uPlot fica no rodapé e o
+        // apresentador precisa do valor junto das métricas, no alto da tela.
+        setCursor: [(u) => {
+          const i = u.cursor.idx
+          const ponto = i == null ? null : pointsRef.current[i]
+          hoverRef.current?.(ponto ? { index: i, ...ponto } : null)
+        }],
+      },
     }
 
-    plotRef.current = new uPlot(opts, data, host)
+    plotRef.current = new uPlot(opts, montarDados(mode, pointsRef.current), host)
     const observer = new ResizeObserver(() => plotRef.current?.setSize(medir()))
     observer.observe(host)
     return () => {
       observer.disconnect()
       plotRef.current?.destroy()
       plotRef.current = null
+      hoverRef.current?.(null)
     }
-  }, [mode, points, minHeight])
+  }, [mode, minHeight])
+
+  // Dado novo não recria o gráfico: só troca a série.
+  useEffect(() => {
+    plotRef.current?.setData(dados)
+  }, [dados])
 
   return <div className="chart-host" ref={hostRef} />
 }

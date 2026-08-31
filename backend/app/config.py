@@ -30,6 +30,12 @@ LOSS_MIN_WINDOWS = _int("LOSS_MIN_WINDOWS", 6)
 READING_INTERVAL_MINUTES = _int("READING_INTERVAL_MINUTES", 15)
 ARCHIVE_ENABLED = os.getenv("ARCHIVE_ENABLED", "false").lower() == "true"
 
+# Ingestão ao vivo. O TTL curto é o que permite rodar o roteiro várias vezes no mesmo
+# dia sem limpeza manual: o dado ao vivo expira sozinho.
+LIVE_TTL_SECONDS = _int("LIVE_TTL_SECONDS", 3600)
+LIVE_TICK_SECONDS = _float("LIVE_TICK_SECONDS", 1.0)
+LIVE_MINUTES_PER_TICK = _int("LIVE_MINUTES_PER_TICK", 30)
+
 KWH_TARIFF = _float("KWH_TARIFF", 0.78)
 FIELD_INSPECTION_COST = _float("FIELD_INSPECTION_COST", 180.0)
 CURRENCY = os.getenv("CURRENCY", "R$")

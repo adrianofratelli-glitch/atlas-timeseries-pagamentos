@@ -10,7 +10,8 @@ curl -s 127.0.0.1:8400/health | jq
 
 - `status: ok`, `readings` in the tens of millions, `flat_sample: true`
 - `change_stream: ativo` — if it says `reconectando`, the live alert will not fire
-- `POST /api/demo/reset` — the script opens a case, and it must not already exist
+- `POST /api/demo/reset` — the script opens a case, and it must not already exist; it
+  also stops and clears any live ingestion left running
 - Open the interface, pick **TR-00000**, 7 days: the gap must read ~28%
 - Switch to **TR-00003**: it must read ~7% and say there is nothing to investigate
 
@@ -84,7 +85,25 @@ The alert appears at the bottom without anybody reloading. That is a change stre
 `investigations`. Say why it is not on the measurements: there it would fire once per
 reading and flood the screen.
 
-## 6 · The lifecycle — 2 min
+## 6 · Live ingestion — 2 min
+
+**Iniciar ingestão ao vivo**, on the transformer already on screen.
+
+The badge turns red, the panel starts counting measurements, and the chart advances in
+five-second bins while the gap opens between the two lines. Hover anywhere: the metric
+row reads back the instant, both values and the gap under the cursor.
+
+Two sentences that matter here:
+
+- The feed writes to `readings_live`, a **separate** collection. The historical base
+  stays untouched, which is why the number you verified against ground truth ten minutes
+  ago is still the same number.
+- That collection has a **one-hour TTL**. Nobody cleans up after this demo — the data
+  expires on its own, and the script runs again this afternoon.
+
+Press stop, or *Reiniciar demo*, which clears it immediately and repaints the screen.
+
+## 7 · The lifecycle — 2 min
 
 `expireAfterSeconds` on the hot collection, Online Archive for the cold years, one
 query across both.

@@ -24,7 +24,9 @@ Seis coisas, um cluster:
    × soma dos medidores abaixo) com `$setWindowFields` para média móvel e desvio.
 5. **Caso** — abrir investigação é uma transação ACID; o change stream vira alerta na
    tela.
-6. **Ciclo de vida** — `expireAfterSeconds` no quente, Online Archive no frio, uma
+6. **Ingestão ao vivo** — botão play alimenta `readings_live`, coleção time series
+   separada com TTL de 1 h; a tela repinta sozinha a cada 1,5 s.
+7. **Ciclo de vida** — `expireAfterSeconds` no quente, Online Archive no frio, uma
    query lendo os dois (depende do tier; ver `LIMITATIONS.md`).
 
 **Não** prova ingestão de milhões de pontos por segundo, time series shardada, nem
@@ -93,6 +95,14 @@ POV_DEV=1 ./start.sh          # HMR + uvicorn --reload
 - O backend nunca escreve em `readings`. Medição é fato de campo; caso é opinião e
   mora em `investigations`.
 - Change stream observa `investigations`, não a coleção time series.
+- Ingestão ao vivo escreve em `readings_live`, nunca em `readings`: a base histórica é
+  a evidência conferida contra a verdade de terra e não pode receber dado novo no meio
+  da demo.
+- O dado ao vivo é carimbado com **tempo real**, não com o relógio simulado. Carimbar o
+  simulado (que continua de onde a base histórica termina, horas no passado) fazia a
+  TTL apagar a série em menos de um minuto.
+- O gráfico é criado uma vez e recebe `setData`; recriar a cada poll matava cursor e
+  zoom no meio da apresentação.
 - A camada de dados (`app/db/`) não importa `fastapi`: erro de domínio sobe como
   exceção própria e `main.py` traduz em status. É o simétrico da regra acima.
 - `/health` lê a contagem de `dataset_info`; `estimated_document_count()` em 58 M

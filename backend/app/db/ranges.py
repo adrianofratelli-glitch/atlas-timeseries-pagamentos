@@ -13,6 +13,7 @@ from ..config import MAX_RANGE_DAYS, READING_INTERVAL_MINUTES
 from .client import db
 
 UNITS = {
+    "second": 1,
     "minute": READING_INTERVAL_MINUTES,
     "hour": 60,
     "day": 60 * 24,
@@ -74,4 +75,5 @@ def resolve(days: float, end: datetime | None = None) -> tuple[datetime, datetim
 
 
 def label(unit: str, size: int) -> str:
-    return {"minute": f"{size} min", "hour": "1 hora", "day": "1 dia"}[unit]
+    return {"second": f"{size} s", "minute": f"{size} min",
+            "hour": "1 hora", "day": "1 dia"}[unit]

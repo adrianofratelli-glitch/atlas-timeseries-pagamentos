@@ -22,6 +22,7 @@ from app.db.client import db
 from app.db.ranges import RangeError
 from app.services import limits
 from app.services.alerts import hub
+from app.services.live import feed
 
 app = FastAPI(title="Medição inteligente · MongoDB Atlas time series", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
@@ -84,6 +85,7 @@ def health():
         "readings": readings,
         "flat_sample": "readings_flat" in collections,
         "change_stream": hub.state,
+        "live": feed.status(),
         "change_stream_error": hub.last_error,
         "archive_enabled": config.ARCHIVE_ENABLED,
         "thresholds": {"loss_pct": config.LOSS_THRESHOLD_PCT,
@@ -124,13 +126,45 @@ def list_scenarios():
 
 # ------------------------------------------------------------------------ série
 @app.get("/api/curve")
-def load_curve(meter_id: str, days: float = Query(1.0, gt=0), fill: bool = False):
-    return _timed(lambda: curve.load_curve(meter_id, days, fill), "interativo")
+def load_curve(meter_id: str, days: float = Query(1.0, gt=0), fill: bool = False,
+               live: bool = False):
+    return _timed(lambda: curve.load_curve(meter_id, days, fill, live), "interativo")
 
 
 @app.get("/api/balance")
-def transformer_balance(transformer_id: str, days: float = Query(7.0, gt=0)):
-    return _timed(lambda: balance.transformer_balance(transformer_id, days), "analitico")
+def transformer_balance(transformer_id: str, days: float = Query(7.0, gt=0),
+                        live: bool = False):
+    return _timed(lambda: balance.transformer_balance(transformer_id, days, live),
+                  "analitico")
+
+
+# ------------------------------------------------------------------- ao vivo
+class LiveStart(BaseModel):
+    transformer_id: str = Field(min_length=3, max_length=64)
+
+
+@app.post("/api/live/start")
+def live_start(body: LiveStart):
+    if not db().transformers.find_one({"transformer_id": body.transformer_id},
+                                      {"_id": 1}):
+        raise HTTPException(status_code=404,
+                            detail={"reason": "transformador não encontrado"})
+    return feed.start(body.transformer_id)
+
+
+@app.post("/api/live/stop")
+def live_stop():
+    return feed.stop()
+
+
+@app.post("/api/live/clear")
+def live_clear():
+    return feed.clear()
+
+
+@app.get("/api/live/status")
+def live_status():
+    return feed.status()
 
 
 @app.get("/api/storage")
@@ -176,7 +210,11 @@ def finish_case(case_id: str, outcome: str = Query("confirmado", max_length=64),
 
 @app.post("/api/demo/reset")
 def reset():
-    return cases.reset_demo()
+    # Reiniciar a demo também para e apaga a ingestão ao vivo: senão o próximo
+    # roteiro começa com a série da apresentação anterior ainda na tela.
+    resultado = cases.reset_demo()
+    resultado["ao_vivo"] = feed.clear()
+    return resultado
 
 
 # ---------------------------------------------------------------------- alertas

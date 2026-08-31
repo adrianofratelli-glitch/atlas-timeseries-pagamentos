@@ -15,10 +15,15 @@ from .client import db, with_retry
 from .ranges import label, resolve
 
 
-def pipeline(transformer_id: str, start: datetime, end: datetime, unit: str,
-             size: int, window: int) -> list[dict]:
+def pipeline(transformer_id: str, start: datetime | None, end: datetime | None,
+             unit: str, size: int, window: int) -> list[dict]:
+    # Ao vivo não filtra por faixa: a TTL de `readings_live` já limita o que existe
+    # lá, e ancorar no relógio esconderia o dado simulado, que corre adiantado.
+    match: dict = {"meta.transformer_id": transformer_id}
+    if start and end:
+        match["ts"] = {"$gte": start, "$lt": end}
     return [
-        {"$match": {"meta.transformer_id": transformer_id, "ts": {"$gte": start, "$lt": end}}},
+        {"$match": match},
         {"$group": {
             "_id": {"t": {"$dateTrunc": {"date": "$ts", "unit": unit, "binSize": size}},
                     "kind": "$meta.kind"},
@@ -58,11 +63,18 @@ def pipeline(transformer_id: str, start: datetime, end: datetime, unit: str,
     ]
 
 
-def transformer_balance(transformer_id: str, days: float) -> dict:
-    start, end, unit, size = resolve(days)
+def transformer_balance(transformer_id: str, days: float, live: bool = False) -> dict:
+    if live:
+        # Bins de 5 s: ao vivo o eixo é o relógio real (~1 s por tick), então
+        # agrupar por minuto devolvia um ponto só nos primeiros minutos.
+        start = end = None
+        unit, size = "second", 5
+    else:
+        start, end, unit, size = resolve(days)
     window = LOSS_MIN_WINDOWS
     pipe = pipeline(transformer_id, start, end, unit, size, window)
-    rows = with_retry(lambda: list(db().readings.aggregate(pipe, maxTimeMS=MAX_TIME_MS)))
+    colecao = "readings_live" if live else "readings"
+    rows = with_retry(lambda: list(db()[colecao].aggregate(pipe, maxTimeMS=MAX_TIME_MS)))
 
     # Suspeita = média móvel acima do limiar por LOSS_MIN_WINDOWS janelas seguidas.
     # Um pico isolado é ruído de medição; o que acusa furto é gap que não volta.
@@ -77,7 +89,10 @@ def transformer_balance(transformer_id: str, days: float) -> dict:
 
     return {
         "transformer_id": transformer_id,
-        "from": start, "to": end,
+        "live": live,
+        "collection": colecao,
+        "from": rows[0]["ts"] if live and rows else start,
+        "to": rows[-1]["ts"] if live and rows else end,
         "granularity": {"unit": unit, "bin_size": size, "label": label(unit, size)},
         "points": rows,
         "totals": {"entregue_kwh": round(entregue, 2),

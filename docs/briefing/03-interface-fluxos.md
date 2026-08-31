@@ -61,6 +61,37 @@ Three visual rules the chart must obey:
   granularity under a presenter is how a demo produces a question nobody can answer on
   stage.
 
+## The cursor readout
+
+`uPlot`'s own legend sits under the chart. The presenter needs the value where the eyes
+already are, so a `setCursor` hook publishes the hovered point and the metric row
+replaces "server aggregation" with the instant, the two values and the gap under the
+cursor. Moving off the chart restores the label.
+
+Two consequences the first version got wrong:
+
+- **The plot is created once and fed with `setData`.** Recreating it whenever the points
+  changed destroyed the cursor and any zoom the presenter had set — every 1.5 s while
+  live ingestion runs.
+- **The callback lives in a ref.** Otherwise a new function identity on each parent
+  render rebuilds the chart for no reason.
+
+## Live ingestion
+
+The play button starts a background feed writing into `readings_live`. While it runs:
+
+- the topbar carries a red *ingerindo ao vivo* badge;
+- the rail shows measurements written, the simulated clock, the pace and the TTL, with
+  the only continuous animation on the screen — a pulsing dot, disabled under
+  `prefers-reduced-motion`;
+- the chart repaints every 1.5 s **silently**: marking the panel busy on every poll made
+  it flicker for the whole demo;
+- stopping, or *Reiniciar demo*, clears the collection immediately.
+
+`Reiniciar demo` also reloads health, scenarios and the current chart, and says what it
+removed. The first version only called the endpoint, so the screen kept showing the
+previous state and the button looked broken.
+
 ## Streaming
 
 One `EventSource` on `/api/alerts/stream`, opened once at mount and closed on unmount.
