@@ -238,11 +238,31 @@ def main():
     # ganho evapora (26 B/evento). Agrupar pela série inteira derruba para ~17.
     baldes: dict[tuple, list] = {}
     por_rota = max(args.batch // 40, 300)
+    # Rotas prontas vão para um lote grande antes de virar insert_many. Enviar cada
+    # rota isolada (300 docs) multiplicou os round trips e derrubou a carga para
+    # ~1 k eventos/s; o que importa é a rota ficar contígua DENTRO do lote, não o
+    # lote conter uma rota só.
+    pendentes: list[list] = [[] for _ in range(args.workers)]
+    tamanho_pendente = [0] * args.workers
 
     def despachar(rota, docs_rota):
         if args.sort:
             docs_rota.sort(key=lambda x: x["ts"])
-        filas[particao(rota)].put(docs_rota)
+        i = particao(rota)
+        pendentes[i].append(docs_rota)
+        tamanho_pendente[i] += len(docs_rota)
+        if tamanho_pendente[i] >= args.batch:
+            lote = [doc for grupo in pendentes[i] for doc in grupo]
+            filas[i].put(lote)
+            pendentes[i] = []
+            tamanho_pendente[i] = 0
+
+    def drenar():
+        for i in range(args.workers):
+            if pendentes[i]:
+                filas[i].put([doc for grupo in pendentes[i] for doc in grupo])
+                pendentes[i] = []
+                tamanho_pendente[i] = 0
 
     for n in range(args.days):
         dia = inicio + timedelta(days=n)
@@ -264,6 +284,7 @@ def main():
             if balde:
                 despachar(rota, balde)
                 baldes[rota] = []
+        drenar()
         print(f"  dia {n+1}/{args.days}  {escritos[0]:>12,} eventos  "
               f"{escritos[0]/max(time.time()-t0,1e-6):>9,.0f}/s", flush=True)
         if falha:
