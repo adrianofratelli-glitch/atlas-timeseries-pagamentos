@@ -36,6 +36,29 @@ Portas: backend **8400**, frontend **5400**. Banco: `trilho_pagamentos`.
 A versão anterior desta PoV (vertical energia, medição inteligente) está preservada na
 tag `v1-energia`.
 
+## Como subir
+
+Pelo portal do portfólio (`povs` no terminal, depois o botão da PoV). O
+`start.sh` é o launcher que ele executa e cumpre o contrato do orquestrador:
+
+- fica em **primeiro plano**, para o grupo de processos segurar os filhos;
+- derruba a **árvore inteira** no SIGTERM — `npm run preview` gera um neto (vite)
+  que continua escutando a 5400 se só o npm morrer;
+- arma o trap **antes** de subir qualquer coisa, para um encerramento durante a
+  partida não deixar órfão;
+- **espera até 10 s** por uma porta que ainda está fechando de uma ativação
+  anterior, em vez de falhar de imediato — o ciclo normal do portal é encerrar e
+  reativar em seguida;
+- os dois serviços rodam com `cwd` dentro do repositório, que é como o
+  orquestrador identifica o que é dele para encerrar.
+
+Este é o motivo de a PoV **não** ficar com `availability: in_progress` no
+`povs.json`: o orquestrador recusa ativar uma PoV nesse estado.
+
+Rodar à mão (`./start.sh`) funciona, mas fora do portal o controller pode
+encerrar os processos ao ativar outra PoV — a política é `single-active` e ela é
+aplicada por `cwd`.
+
 ## Comandos
 
 ```bash
