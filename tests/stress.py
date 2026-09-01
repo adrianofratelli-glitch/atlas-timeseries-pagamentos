@@ -1,4 +1,4 @@
-"""Carga misturada: curva interativa concorrendo com balanço analítico.
+"""Carga misturada: velocity interativo concorrendo com saúde de provedor analítica.
 
 O ponto não é achar o teto de throughput — é verificar que a consulta analítica não
 sequestra o caminho interativo. Sob saturação, um sistema honesto recusa cedo em vez
@@ -26,7 +26,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def call(path: str, params: dict) -> tuple[int, float]:
-    url = BASE + path + "?" + urllib.parse.urlencode(params)
+    url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
     t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(url, timeout=60) as res:
@@ -48,8 +48,8 @@ def percentis(v: list[float]) -> dict:
             "max": round(v[-1], 1)}
 
 
-def rodada(clientes: int, segundos: float, medidores: list[str],
-           transformadores: list[str]) -> dict:
+def rodada(clientes: int, segundos: float, contas: list[str],
+           provedores: list[str]) -> dict:
     parar = threading.Event()
     lock = threading.Lock()
     interativo: list[float] = []
@@ -61,14 +61,11 @@ def rodada(clientes: int, segundos: float, medidores: list[str],
             # Três de cada quatro clientes fazem o caminho interativo; é a proporção
             # de uma tela real, e é ele que não pode ser atrasado.
             if i % 4 == 0:
-                code, ms = call("/api/balance", {
-                    "transformer_id": random.choice(transformadores),
-                    "days": random.choice([7, 30])})
+                code, ms = call(f"/api/providers/{random.choice(provedores)}/health",
+                                {"hours": random.choice([24, 168])})
                 alvo = analitico
             else:
-                code, ms = call("/api/curve", {
-                    "meter_id": random.choice(medidores),
-                    "days": random.choice([1, 7]), "fill": "false"})
+                code, ms = call(f"/api/velocity/{random.choice(contas)}", {})
                 alvo = interativo
             with lock:
                 alvo.append(ms)
@@ -102,15 +99,13 @@ def main() -> int:
 
     with urllib.request.urlopen(BASE + "/api/scenarios", timeout=30) as res:
         cen = json.loads(res.read())
-    transformadores = [s["transformer_id"] for s in cen["scenarios"]]
-    with urllib.request.urlopen(
-            f'{BASE}/api/transformers/{transformadores[0]}/meters?limit=60', timeout=30) as res:
-        medidores = [m["meter_id"] for m in json.loads(res.read())["meters"]]
+    provedores = [s["provedor_id"] for s in cen["scenarios"]]
+    contas = [c["conta_id"] for c in cen.get("demo_accounts", [])] or ["C000000001"]
 
     resultados = []
     n = 4
     while n <= args.max:
-        r = rodada(n, args.seconds, medidores, transformadores)
+        r = rodada(n, args.seconds, contas, provedores)
         resultados.append(r)
         print(f'{n:4d} clientes  {r["rps"]:7.1f} rps  '
               f'interativo p50 {r["interativo_ms"].get("p50", 0):7.1f}ms '

@@ -1,83 +1,111 @@
-# ADR 0001 — Bucket span of the time series collection
+# ADR 0001 — Bucket span, and the order events are written in
 
-**Status:** accepted · **Date:** 2026-08-31 · Measured on the demo Atlas cluster (M20,
-4 GB RAM, 2 vCPU, MongoDB 9.0)
+**Status:** accepted · **Date:** 2026-09-01 · Measured on the demo Atlas cluster
+(M20, 4 GB RAM, 2 vCPU, MongoDB 9.0)
 
 ## Context
 
 `bucketMaxSpanSeconds` and `bucketRoundingSeconds` are fixed when the collection is
 created and cannot be changed afterwards. Getting them wrong means recreating the
-collection and rewriting every measurement, which is why this is decided before the
-generator produces the full base and before any code depends on it.
+collection and rewriting the data.
 
-The workload: a reading every 15 minutes, 96 per meter per day, meta field of
-`{meter_id, transformer_id, feeder_id, phase, kind}`.
+The workload: a payment rail at ~75 events/s average, `meta` holding the route
+(`canal`, `provedor`, `produto`, `uf`) — around 2 900 distinct combinations.
 
 ## Measured
 
-`queries/bucket_experiment.py`, sample of 7 days × 495 meters + 11 boundary meters =
-**339 864 measurements**, loaded five times. 30 runs per query after warm-up. Raw
-output in `queries/bucket-experiment.json`.
+`queries/bucket_experiment.py`, the same **400 000 events** loaded six times, 15 runs
+per query after warm-up. Raw output in `queries/bucket-experiment.json`.
 
-| Variant | Bucket span | Storage | Index | B/measurement | Ratio¹ | Ingest | Curve 1d | Curve 7d | Balance 1d |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| plain collection | — | 18.45 MB | 18.74 MB | 54.29 | 1.0× | 33 k/s | 9.4 ms | 10.7 ms | **33.2 ms** |
-| `granularity: "seconds"` | 1 h | 11.46 MB | 8.96 MB | 33.72 | 1.61× | **6.9 k/s** | 10.0 ms | 13.0 ms | 32.5 ms |
-| `granularity: "minutes"` | 24 h | 4.14 MB | 0.59 MB | 12.17 | 4.46× | 50 k/s | 9.6 ms | 9.7 ms | 12.5 ms |
-| **`bucketMaxSpanSeconds: 86400`** | 24 h | **2.54 MB** | **0.43 MB** | **7.47** | **7.26×** | **50 k/s** | 9.7 ms | 9.9 ms | **11.4 ms** |
-| `bucketMaxSpanSeconds: 604800` | 7 d | 2.34 MB | 0.37 MB | 6.89 | 7.88× | 43 k/s | 9.8 ms | 10.4 ms | 13.0 ms |
+| Variant | Buckets | ev/bucket | Storage | Index | B/event | Ratio¹ | Ingest | Latency query | Health query |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| plain collection | — | — | 21.17 MB | 19.44 MB | 52.92 | 1.0× | 28 091/s | 2 397 ms | 75.2 ms |
+| `granularity: "seconds"` | 23 630 | 16.9 | 9.65 MB | 3.76 MB | 24.13 | 2.19× | 6 593/s | 1 680 ms | 32.2 ms |
+| `granularity: "minutes"` | 19 447 | 20.6 | 13.66 MB | 3.91 MB | 34.16 | 1.55× | 6 211/s | 1 260 ms | 24.1 ms |
+| `bucketMaxSpanSeconds: 3600` | 25 551 | 15.7 | 10.72 MB | 3.65 MB | 26.81 | 1.97× | 5 332/s | 1 376 ms | 32.7 ms |
+| `bucketMaxSpanSeconds: 86400` | 19 447 | 20.6 | 13.20 MB | 3.54 MB | 33.00 | 1.60× | 6 302/s | 1 290 ms | 19.2 ms |
+| **86400, written series-contiguous** | 19 445 | 20.6 | **4.36 MB** | **1.31 MB** | **10.90** | **4.86×** | **12 308/s** | 1 246 ms | 20.7 ms |
 
-¹ storage only, against the plain collection. Counting the index as well, the chosen
-variant is **12.5× smaller** than the same data in a plain collection (2.97 MB against
-37.19 MB) — the index is where most of it comes from, because an index on a time
-series collection indexes buckets, not measurements.
+¹ storage per event against the plain collection.
 
-**Network floor: p50 8.2 ms** for a `hello` against this cluster from the same host.
-Both curve queries sit within 1.5 ms of that floor in every variant, so they do not
-discriminate between variants at this volume — they measure the round trip. The
-comparison that decides is the balance query and the storage.
+## The finding that mattered more than the span
 
-## Findings that changed the decision
+The last row differs from the one above it **only in the order the events were written**
+— same schema, same bucket parameters, the same events, the same bucket count and the
+same occupancy. Storage per event drops 3× and ingestion doubles.
 
-**The one-hour bucket is the worst of both worlds.** `granularity: "seconds"` sounds
-conservative and is the default reflex for 15-minute data. It gives 4 measurements per
-bucket, 1.61× compression, and — the number nobody expects — **7× slower ingestion**
-(6.9 k/s against 50 k/s). Twenty-four times more bucket documents to open, fill and
-close. This was re-measured with the load order reversed to rule out warm-up bias; the
-gap held.
+That result was surprising enough to be worth isolating, because the first attempt to
+apply it did not reproduce. Four variants, 1 000 000 events over 1 296 routes:
 
-**The seven-day bucket wins storage and loses the query that matters.** 7.88× against
-7.26× is 8% less storage, and it costs 14% on the transformer balance (13.0 ms against
-11.4 ms) — the query that touches every meter under the transformer and has to unpack
-a week of buckets to answer about one day. The demo runs that query live.
+| How the writer ordered the events | B/event | Buckets | ev/bucket | Ingest |
+|---|---:|---:|---:|---:|
+| generation order, 25 k batches | 33.79 | 46 215 | 21.6 | 8 672/s |
+| sorted **inside** each 25 k batch | 29.88 | 46 215 | 21.6 | 7 905/s |
+| sorted **globally**, 25 k batches | **16.84** | 46 217 | 21.6 | **11 733/s** |
 
-**Explicit beats the keyword.** `"minutes"` produces the same 24 h span but 4.46×
-against 7.26×, because the server's own rounding leaves the buckets less densely
-packed than the explicit rounding does. Same span, 63% more storage.
+Sorting inside a batch buys 12%. Sorting globally buys **2×** — and the bucket count is
+identical in all three, so this is not about how many buckets exist. It is about a
+bucket receiving its measurements contiguously, in time order, instead of a few at a
+time interleaved with a thousand other series over the bucket's whole lifetime.
+
+The first fix attempt got this wrong in an instructive way: four parallel writers, each
+sorting its own batch and partitioned by `(canal, provedor)`, produced **26 B/event** on
+the full base — no better than unsorted. Each partition still carried 81 distinct routes
+(`produto` × `uf`), so within a partition the series were still interleaved. The unit
+that has to be contiguous is the **series**, not the partition.
+
+### How much of that survives in a streaming writer
+
+The 2× above comes from sorting the whole sample before writing — every event of a
+series delivered in one contiguous run. A streaming writer cannot do that; it can only
+approximate it by buffering per route and flushing when the buffer fills.
+
+Measured on the real load, buffering 300 events per route across four partitioned
+writers: **22.86 bytes per event against 24.26** in generation order. Six percent, not
+100%.
+
+The gap is the point. With ~860 events per route per day and a 300-event buffer, each
+route's bucket is still filled in three separate flushes with a thousand other routes
+writing in between. The saving scales with how much of a bucket the writer can deliver
+in one call, not with whether the batch happens to be sorted.
+
+The practical form for a customer, then, is specific: **buffer per route long enough to
+cover a bucket**, or accept ~24 bytes per event. A Kafka consumer keyed by route with a
+generous linger gets most of it; a fan-out consumer, or a per-route buffer far smaller
+than the bucket, gets almost none. Saying "just sort your writes" would be a slide that
+does not survive contact with the customer's pipeline.
 
 ## Decision
 
 ```js
-db.createCollection("readings", {
+db.createCollection("payment_events", {
   timeseries: { timeField: "ts", metaField: "meta",
-                bucketMaxSpanSeconds: 86400, bucketRoundingSeconds: 86400 },
-  expireAfterSeconds: 34560000   // 400 dias
+                bucketMaxSpanSeconds: 86400, bucketRoundingSeconds: 86400 }
 })
 ```
 
-96 measurements per bucket, one bucket per meter per day. Best balance latency, best
-ingestion, within 8% of the best storage, and stated in the schema instead of implied
-by a keyword a reader would have to expand mentally.
+and **the writer buffers per route and flushes a route's events together** —
+`generate_events.py` does this by default; `--no-sort` reproduces the generation-order
+row.
+
+The one-day span wins the health query (19.2 ms against 24–33 ms) and ties on storage
+once sorting is applied. `granularity: "seconds"` looks competitive on raw storage only
+because its buckets are so sparse that there is little left to compress badly.
+
+## What the span does **not** buy here
+
+At this event density the span is not the binding constraint: a bucket also closes on a
+measurement count and a size limit, which is why a one-day span and a one-minute
+granularity produce the same 19 447 buckets. The span matters at low events-per-series;
+the write order matters at high fan-out. This workload is the second case.
 
 ## Consequences
 
-- The numbers above go into `queries/benchmarks.md` and `docs/briefing/02-mongodb.md`,
-  and a customer asking "why that span" gets this table rather than a preference.
-- At 7.47 bytes per measurement, the target base of ~57.6 M measurements is around
-  **430 MB of storage plus ~75 MB of index** — comfortable on this cluster, which is
-  what allows the full 30 days to stay in the demo.
-- The curve queries are at the network floor at this volume. Any latency claim about
-  them must be re-measured at full volume before it appears in front of a customer;
-  `queries/benchmarks.md` is the only place those numbers live.
-- Re-run `queries/bucket_experiment.py` if the reading interval changes. A 5-minute
-  interval triples the measurements per bucket and moves every row of this table.
+- The numbers go into `queries/benchmarks.md` and `docs/briefing/02-mongodb.md`. A
+  customer asking "why that span" gets this table, not a preference.
+- The plain collection ingests **4.5× faster** (28 091/s against 6 302/s unsorted, 2.3×
+  against sorted). Time series trades write throughput for storage and query shape, and
+  saying otherwise to an architect is how the conversation ends. It is in
+  `LIMITATIONS.md`.
+- Re-run `queries/bucket_experiment.py` if the route cardinality or the event rate
+  changes materially. Both move every row.

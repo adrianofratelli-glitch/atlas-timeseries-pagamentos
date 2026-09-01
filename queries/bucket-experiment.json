@@ -1,135 +1,122 @@
 {
-  "measured_at": "2026-08-31T22:11:44.909980+00:00",
-  "db": "energia_medicao_sample",
-  "days": 7,
-  "runs": 30,
-  "meter": "MED-00000000",
-  "transformer": "TR-00000",
+  "measured_at": "2026-09-01T14:38:55.831123+00:00",
+  "events": 400000,
+  "provedor": "PSP-000",
+  "runs": 15,
   "rows": [
     {
-      "variant": "flat",
-      "docs": 339864,
-      "storage_mb": 18.45,
-      "index_mb": 18.74,
-      "total_mb": 37.19,
-      "bytes_per_measurement": 54.29,
+      "variante": "flat",
+      "eventos_por_bucket": 400000.0,
+      "eventos": 400000,
       "buckets": null,
-      "curve_1d": {
-        "p50": 9.4,
-        "p95": 10.5,
-        "min": 7.7
+      "storage_mb": 21.17,
+      "index_mb": 19.44,
+      "bytes_por_evento": 52.92,
+      "ingestao_por_s": 28091,
+      "latencia_ms": {
+        "p50": 2397.5,
+        "p95": 2652.3
       },
-      "curve_7d": {
-        "p50": 10.7,
-        "p95": 14.1,
-        "min": 10.2
-      },
-      "balance_1d": {
-        "p50": 33.2,
-        "p95": 43.9,
-        "min": 17.6
+      "saude_ms": {
+        "p50": 75.2,
+        "p95": 100.6
       },
       "ratio_vs_flat": 1.0
     },
     {
-      "variant": "seconds",
-      "docs": 339864,
-      "storage_mb": 11.46,
-      "index_mb": 8.96,
-      "total_mb": 20.42,
-      "bytes_per_measurement": 33.72,
-      "buckets": null,
-      "curve_1d": {
-        "p50": 10.0,
-        "p95": 11.4,
-        "min": 9.4
+      "variante": "seconds",
+      "eventos_por_bucket": 16.9,
+      "eventos": 400000,
+      "buckets": 23630,
+      "storage_mb": 9.65,
+      "index_mb": 3.76,
+      "bytes_por_evento": 24.13,
+      "ingestao_por_s": 6593,
+      "latencia_ms": {
+        "p50": 1680.2,
+        "p95": 1854.4
       },
-      "curve_7d": {
-        "p50": 13.0,
-        "p95": 26.5,
-        "min": 11.3
+      "saude_ms": {
+        "p50": 32.2,
+        "p95": 61.7
       },
-      "balance_1d": {
-        "p50": 32.5,
-        "p95": 62.7,
-        "min": 16.5
-      },
-      "ratio_vs_flat": 1.61
+      "ratio_vs_flat": 2.19
     },
     {
-      "variant": "minutes",
-      "docs": 339864,
-      "storage_mb": 4.14,
-      "index_mb": 0.59,
-      "total_mb": 4.72,
-      "bytes_per_measurement": 12.17,
-      "buckets": null,
-      "curve_1d": {
-        "p50": 9.6,
-        "p95": 10.7,
-        "min": 9.0
+      "variante": "minutes",
+      "eventos_por_bucket": 20.6,
+      "eventos": 400000,
+      "buckets": 19447,
+      "storage_mb": 13.66,
+      "index_mb": 3.91,
+      "bytes_por_evento": 34.16,
+      "ingestao_por_s": 6211,
+      "latencia_ms": {
+        "p50": 1259.5,
+        "p95": 1451.5
       },
-      "curve_7d": {
-        "p50": 9.7,
-        "p95": 10.6,
-        "min": 8.1
+      "saude_ms": {
+        "p50": 24.1,
+        "p95": 39.9
       },
-      "balance_1d": {
-        "p50": 12.5,
-        "p95": 22.5,
-        "min": 11.2
-      },
-      "ratio_vs_flat": 4.46
+      "ratio_vs_flat": 1.55
     },
     {
-      "variant": "span1d",
-      "docs": 339864,
-      "storage_mb": 2.54,
-      "index_mb": 0.43,
-      "total_mb": 2.97,
-      "bytes_per_measurement": 7.47,
-      "buckets": null,
-      "curve_1d": {
-        "p50": 9.7,
-        "p95": 11.1,
-        "min": 9.2
+      "variante": "span1h",
+      "eventos_por_bucket": 15.7,
+      "eventos": 400000,
+      "buckets": 25551,
+      "storage_mb": 10.72,
+      "index_mb": 3.65,
+      "bytes_por_evento": 26.81,
+      "ingestao_por_s": 5332,
+      "latencia_ms": {
+        "p50": 1376.4,
+        "p95": 1571.3
       },
-      "curve_7d": {
-        "p50": 9.9,
-        "p95": 11.0,
-        "min": 9.1
+      "saude_ms": {
+        "p50": 32.7,
+        "p95": 65.5
       },
-      "balance_1d": {
-        "p50": 11.4,
-        "p95": 15.2,
-        "min": 10.8
-      },
-      "ratio_vs_flat": 7.26
+      "ratio_vs_flat": 1.97
     },
     {
-      "variant": "span7d",
-      "docs": 339864,
-      "storage_mb": 2.34,
-      "index_mb": 0.37,
-      "total_mb": 2.71,
-      "bytes_per_measurement": 6.89,
-      "buckets": null,
-      "curve_1d": {
-        "p50": 9.8,
-        "p95": 12.1,
-        "min": 8.4
+      "variante": "span1d",
+      "eventos_por_bucket": 20.6,
+      "eventos": 400000,
+      "buckets": 19447,
+      "storage_mb": 13.2,
+      "index_mb": 3.54,
+      "bytes_por_evento": 33.0,
+      "ingestao_por_s": 6302,
+      "latencia_ms": {
+        "p50": 1290.1,
+        "p95": 1366.7
       },
-      "curve_7d": {
-        "p50": 10.4,
-        "p95": 11.2,
-        "min": 9.9
+      "saude_ms": {
+        "p50": 19.2,
+        "p95": 27.7
       },
-      "balance_1d": {
-        "p50": 13.0,
-        "p95": 21.3,
-        "min": 12.0
+      "ratio_vs_flat": 1.6
+    },
+    {
+      "variante": "span1d_ordenado",
+      "eventos_por_bucket": 20.6,
+      "eventos": 400000,
+      "buckets": 19445,
+      "storage_mb": 4.36,
+      "index_mb": 1.31,
+      "bytes_por_evento": 10.9,
+      "ingestao_por_s": 12308,
+      "latencia_ms": {
+        "p50": 1246.4,
+        "p95": 1454.4
       },
-      "ratio_vs_flat": 7.88
+      "saude_ms": {
+        "p50": 20.7,
+        "p95": 39.4
+      },
+      "ratio_vs_flat": 4.86
     }
   ]
 }

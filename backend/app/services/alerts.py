@@ -1,10 +1,11 @@
-"""Change stream em `investigations` virando SSE.
+"""Change stream em `incidents` virando SSE.
 
-Observa a coleção de casos, não a série. Um change stream sobre a coleção time
-series dispara por medição — útil para pipeline, inútil para acordar uma tela.
+Observa a coleção de incidentes, não a série. Um change stream sobre `payment_events`
+dispara por transação — dezenas por segundo, útil para pipeline, inútil para acordar
+uma tela.
 
-Uma transação que abre um caso produz mais de um evento; o hub coalesce por
-`case_id` dentro de uma janela curta para que a tira de alertas mostre uma linha,
+Uma transação que abre um incidente produz mais de um evento; o hub coalesce por
+`incident_id` dentro de uma janela curta para que a tira de alertas mostre uma linha,
 não três.
 """
 from __future__ import annotations
@@ -75,7 +76,7 @@ class AlertHub:
             try:
                 d = db()
                 pipeline = [{"$match": {"operationType": {"$in": ["insert", "update"]}}}]
-                with d.investigations.watch(pipeline, full_document="updateLookup") as stream:
+                with d.incidents.watch(pipeline, full_document="updateLookup") as stream:
                     self.state = "ativo"
                     self.last_error = None
                     backoff = 1.0
@@ -83,23 +84,25 @@ class AlertHub:
                         if self._stop.is_set():
                             break
                         doc = change.get("fullDocument") or {}
-                        case_id = doc.get("case_id")
+                        incident_id = doc.get("incident_id")
                         now = time.time()
-                        if case_id and now - self._seen.get(case_id, 0) < COALESCE_SECONDS:
+                        if incident_id and now - self._seen.get(incident_id, 0) < COALESCE_SECONDS:
                             continue
-                        if case_id:
-                            self._seen[case_id] = now
+                        if incident_id:
+                            self._seen[incident_id] = now
+                        ev = doc.get("evidencia") or {}
                         alert = {
-                            "case_id": case_id,
-                            "meter_id": doc.get("meter_id"),
-                            "transformer_id": doc.get("transformer_id"),
+                            "incident_id": incident_id,
+                            "provedor_id": doc.get("provedor_id"),
+                            "canal": doc.get("canal"),
                             "status": doc.get("status"),
-                            "gap_kwh": (doc.get("evidence") or {}).get("gap_kwh"),
-                            "gap_pct": (doc.get("evidence") or {}).get("gap_pct"),
+                            "z_recusa": ev.get("z_recusa"),
+                            "z_p99": ev.get("z_p99"),
+                            "taxa_recusa_pct": ev.get("taxa_recusa_pct"),
                             "at": datetime.now(timezone.utc),
                             "operation": change.get("operationType"),
                         }
-                        d.loss_alerts.insert_one(dict(alert))
+                        d.incident_alerts.insert_one(dict(alert))
                         alert.pop("_id", None)
                         self._publish(alert)
             except Exception as exc:  # noqa: BLE001 — o stream não pode derrubar a API

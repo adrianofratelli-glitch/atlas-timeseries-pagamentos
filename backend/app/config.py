@@ -18,16 +18,21 @@ def _float(name: str, default: float) -> float:
 
 
 MONGODB_URI = os.environ["MONGODB_URI"]
-MONGODB_DB = os.getenv("MONGODB_DB", "energia_medicao")
+MONGODB_DB = os.getenv("MONGODB_DB", "trilho_pagamentos")
 
 MAX_TIME_MS = _int("TS_MAX_TIME_MS", 15000)
 MAX_RANGE_DAYS = _int("TS_MAX_RANGE_DAYS", 90)
 MAX_POINTS = _int("TS_MAX_POINTS", 4000)
 
-LOSS_THRESHOLD_PCT = _float("LOSS_THRESHOLD_PCT", 10.0)
-LOSS_MIN_WINDOWS = _int("LOSS_MIN_WINDOWS", 6)
+# Detecção por desvio da própria linha de base, não por limiar absoluto: um
+# adquirente de crédito recusa 23% e está saudável; um PSP de PIX que recusa 3% está
+# em incidente. Ver o controle negativo plantado em degradation_scenarios.
+Z_SCORE_THRESHOLD = _float("Z_SCORE_THRESHOLD", 3.0)
+Z_MIN_WINDOWS = _int("Z_MIN_WINDOWS", 3)
 
-READING_INTERVAL_MINUTES = _int("READING_INTERVAL_MINUTES", 15)
+# Janelas do velocity da conta, em horas. Entram numa passada só sobre a maior.
+VELOCITY_WINDOWS = [int(x) for x in
+                    os.getenv("VELOCITY_WINDOWS", "1,6,24").split(",") if x.strip()]
 ARCHIVE_ENABLED = os.getenv("ARCHIVE_ENABLED", "false").lower() == "true"
 
 # Ingestão ao vivo. O TTL curto é o que permite rodar o roteiro várias vezes no mesmo
@@ -36,8 +41,9 @@ LIVE_TTL_SECONDS = _int("LIVE_TTL_SECONDS", 3600)
 LIVE_TICK_SECONDS = _float("LIVE_TICK_SECONDS", 1.0)
 LIVE_MINUTES_PER_TICK = _int("LIVE_MINUTES_PER_TICK", 30)
 
-KWH_TARIFF = _float("KWH_TARIFF", 0.78)
-FIELD_INSPECTION_COST = _float("FIELD_INSPECTION_COST", 180.0)
+# NÃO são medições: são os números do cliente, e a tela os rotula como tais.
+CUSTO_MINUTO_INDISPONIVEL = _float("CUSTO_MINUTO_INDISPONIVEL", 0.0)
+TICKET_MEDIO_REFERENCIA = _float("TICKET_MEDIO_REFERENCIA", 0.0)
 CURRENCY = os.getenv("CURRENCY", "R$")
 
 BACKEND_PORT = _int("BACKEND_PORT", 8400)

@@ -3,7 +3,7 @@ const BASE = import.meta.env.VITE_API ?? 'http://127.0.0.1:8400'
 async function get(path, params) {
   const url = new URL(BASE + path)
   Object.entries(params ?? {}).forEach(([k, v]) => {
-    if (v !== undefined && v !== null) url.searchParams.set(k, v)
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v)
   })
   const res = await fetch(url)
   const body = await res.json().catch(() => ({}))
@@ -25,20 +25,21 @@ async function post(path, payload) {
 export const api = {
   base: BASE,
   health: () => get('/health'),
-  transformers: () => get('/api/transformers'),
-  meters: (id) => get(`/api/transformers/${id}/meters`),
+  providers: (canal) => get('/api/providers', { canal, limit: 200 }),
   scenarios: () => get('/api/scenarios'),
-  curve: (meterId, days, fill, live) =>
-    get('/api/curve', { meter_id: meterId, days, fill, live }),
-  balance: (transformerId, days, live) =>
-    get('/api/balance', { transformer_id: transformerId, days, live }),
-  liveStart: (transformerId) => post('/api/live/start', { transformer_id: transformerId }),
-  liveStop: () => post('/api/live/stop'),
-  liveClear: () => post('/api/live/clear'),
-  liveStatus: () => get('/api/live/status'),
+  latency: (canal, provedor, hours, fill) =>
+    get('/api/latency', { canal, provedor, hours, fill }),
+  providerHealth: (id, hours) => get(`/api/providers/${id}/health`, { hours }),
+  ranking: (hours) => get('/api/ranking', { hours }),
+  velocity: (contaId) => get(`/api/velocity/${contaId}`),
   storage: () => get('/api/storage'),
-  cases: () => get('/api/cases'),
-  openCase: (payload) => post('/api/cases', payload),
+  incidents: () => get('/api/incidents'),
+  openIncident: (payload) => post('/api/incidents', payload),
   reset: () => post('/api/demo/reset'),
+  liveStart: (canal, eps) => post('/api/live/start', { canal, eps }),
+  liveDegrade: (provedorId) => post('/api/live/degrade', { provedor_id: provedorId }),
+  liveStop: () => post('/api/live/stop'),
+  liveStatus: () => get('/api/live/status'),
+  liveHealth: (id) => get(`/api/live/health/${id}`),
   stream: () => new EventSource(`${BASE}/api/alerts/stream`),
 }

@@ -1,92 +1,82 @@
-# Smart metering on MongoDB Atlas time series
+# Payment rail telemetry on MongoDB Atlas time series
 
-A utility reads twenty thousand meters every fifteen minutes and wants to know which
-transformers are losing energy it never billed. The usual answer to that is four
-systems: a time series database for the readings, a relational database for the
-meters and customers, a cache for the dashboard, and a search engine for the
-investigation history. Four systems, four drivers, four ways to be paged at 3 a.m.,
-and one report that has to join across all of them.
+A digital bank runs a payment rail. Every second it needs to know whether an acquirer
+started declining more than it should, what the p99 authorisation latency is per PSP,
+and — inside the authorisation itself, in tens of milliseconds — how many transactions
+this account has attempted in the last hour.
+
+The usual architecture for that is five systems: a time series database for the metrics,
+a relational database for the provider registry, a cache for the dashboard, a search
+engine for the incident history, and a feature store for the antifraud velocity. Five
+sets of credentials, five backups, five on-call rotations, and one question that has to
+be joined across all of them.
 
 This demonstration puts the whole thing in one Atlas cluster and measures what that
 costs.
 
-> Synthetic data, fictional distributor. No customer identity, no real feeder codes.
+> Synthetic data, fictional providers. No customer traffic, no customer decline rates.
 
 ## The demonstration
 
 **1 · Storage, measured here**
-The same readings written twice — a plain collection and a time series collection —
-with `$collStats` side by side and the ratio computed on screen. Not a number from a
-datasheet: **7.05× less storage per measurement, 12.52× counting the index**, on
-58 820 400 measurements.
+The same events written twice — a plain collection and a time series collection — with
+`$collStats` side by side and the ratio computed on screen. Not a number from a
+datasheet.
 
-![Inspector showing readings at 7.90 bytes per measurement against readings_flat at 55.67, and the ratio computed live](docs/screenshots/01-armazenamento.png)
+**2 · Latency by percentile, not by average**
+`$percentile` over raw events gives p50, p95 and p99 per window, per provider, in the
+pipeline. A rail is judged by its tail; an average hides the customer who waited four
+seconds.
 
-**2 · The load curve**
-One meter, thirty days, tens of millions of measurements in the collection.
-`$dateTrunc` at the granularity the server picks from the requested range, with the
-response time next to the chart.
+**3 · The telemetry gap**
+A PSP stops reporting for forty minutes. `$densify` creates the missing windows and
+`$fill` carries the last observation forward — inside the pipeline, with every
+reconstructed point labelled and drawn dashed.
 
-**3 · The gap**
-A meter that stopped communicating for six hours. `$densify` creates the missing
-timestamps and `$fill` reconstructs the values — inside the pipeline, in 12 ms, with
-every reconstructed point labelled and drawn dashed.
+**4 · Degradation, against the provider's own baseline**
+`$setWindowFields` computes each provider's trailing mean and standard deviation
+*excluding the window being judged*, and the z-score says how far the current window
+drifted. A sustained deviation is an incident.
 
-![Load curve of one meter with 24 reconstructed points drawn as a dashed amber segment between 02:00 and 08:00](docs/screenshots/03-lacuna-densify-fill.png)
+The negative control is the point: a credit acquirer that declines **23% of everything,
+all day, by product mix** must not raise anything, while a PIX PSP that drifts from
+0.3% to 1.2% must. An absolute threshold gets both wrong. This one gets both right, and
+the ground-truth panel on screen says what the seed planted.
 
-**4 · Non-technical loss**
-The transformer's boundary meter against the sum of the meters below it.
-`$setWindowFields` gives the moving average; a sustained gap becomes a suspicion. The
-measured gap is 28.18% against the 27.91% the seed planted — the demo is checked
-against a known answer, not against luck.
+**5 · Velocity inside the authorisation**
+Events, amount and decline rate for one account over 1 h, 6 h and 24 h — one pass, one
+round trip, with the measured latency next to it. Same collection, same cluster. The
+account is a **measurement field with a secondary index**, not a meta field: that is the
+answer to "won't millions of accounts explode this?", and
+[`docs/adr/0002-cardinalidade.md`](docs/adr/0002-cardinalidade.md) has the measurement
+rather than the opinion.
 
-![Balance of transformer TR-00000 showing delivered and registered curves with a red band between them and a 28.18% gap](docs/screenshots/04-perda-nao-tecnica.png)
-
-A transformer whose gap is ordinary technical loss raises nothing. The negative control
-matters more than the positive one: a detector that flags everything is not a detector.
-
-![Balance of transformer TR-00003 showing a 6.98% gap, zero windows above the threshold and nothing to investigate](docs/screenshots/05-controle-negativo.png)
-
-**5 · The case**
-Opening an investigation marks the meter, writes the case and emits the event in one
-ACID transaction. A change stream turns it into an alert on screen with nobody
-reloading anything.
-
-![Investigation INV-BDD78A45F8 listed in the inspector and the same case arriving in the alert strip through the change stream](docs/screenshots/06-caso-acid-alerta.png)
-
-**6 · Live ingestion**
-Press play and the series grows on screen. A background feed writes real measurements
-into `readings_live` — a separate time series collection with a one-hour TTL — while
-the balance repaints every 1.5 s and the gap opens in front of the room. The TTL is the
-point: the data expires on its own, so the script runs again an hour later with nothing
-to clean up.
-
-![Live ingestion running: badge in the topbar, panel showing measurements written and the simulated clock, and the balance chart advancing in five-second bins](docs/screenshots/07-ingestao-ao-vivo.png)
-
-**7 · The lifecycle**
-`expireAfterSeconds` on the hot collection, Online Archive for the cold years, one
-query reading across both.
+**6 · Live, with a degradation you cause**
+Press play and events start landing in a separate collection with a one-hour TTL. Press
+*Injetar degradação* and watch the z-score climb, the verdict flip, the incident open in
+one ACID transaction and the alert arrive through a change stream — nothing pre-recorded,
+and nothing to clean up afterwards.
 
 ## Why this shape of workload, and not another
 
 | | This PoV | A dedicated time series engine |
 |---|---|---|
 | Write rate | thousands/s, steady | millions/s, bursty |
-| The question | joins the series to the asset, the customer and the case | stays inside the series |
-| Cardinality | tens of thousands of sources | millions of sources |
-| What hurts today | operating and joining four systems | raw ingestion throughput |
+| The question | joins the event to the provider, the account and the incident | stays inside the series |
+| Route cardinality | thousands | millions |
+| What hurts today | operating and joining five systems | raw ingestion throughput |
 | Honest answer | consolidate | keep the specialised engine |
 
-A distribution utility's metering workload sits firmly in the left column. A
-telemetry platform ingesting from millions of devices does not, and this repository
-says so rather than pretending otherwise.
+A bank's rail telemetry sits in the left column. A device-telemetry platform ingesting
+from millions of endpoints does not, and this repository says so rather than pretending
+otherwise.
 
 ## Limits
 
 `LIMITATIONS.md` is required reading before presenting. Short version: this does not
-prove ingestion at millions of points per second, does not shard the time series
-collection, and is not a benchmark against InfluxDB or TimescaleDB. Raise those before
-the customer's architect does.
+prove ingestion at a bank's real peak, does not shard the collection, is not a benchmark
+against InfluxDB or Prometheus, and runs at two million accounts rather than tens of
+millions. Raise those before the customer's architect does.
 
 ## Setup
 
@@ -105,24 +95,10 @@ bash data-generator/run_all.sh
 ```bash
 .venv/bin/python tests/test_resilience.py
 .venv/bin/python tests/stress.py
-.venv/bin/python queries/bench.py --runs 30
+.venv/bin/python queries/bench.py --runs 20
+.venv/bin/python queries/bucket_experiment.py         # ADR 0001
+.venv/bin/python queries/cardinality_experiment.py    # ADR 0002
 ```
 
 Measured numbers live in `queries/benchmarks.md`, and they are re-measured rather than
 copied forward when the cluster or the volume changes.
-
-## Status
-
-Built and running against a real Atlas cluster (M20, MongoDB 9.0). **58 820 400
-measurements**, 19 980 meters plus 444 boundary meters, 30 days at one reading per 15
-minutes — 464 MB of data and 80 MB of index.
-
-Measured: 35 hostile cases passing, mixed-workload stress with no 5xx up to 64
-concurrent clients, a 30-day load curve in 16.3 ms over an 8.5 ms network floor, and
-the transformer balance matching the seeded ground truth to within 0.3 percentage
-points. The numbers are in [`queries/benchmarks.md`](queries/benchmarks.md); the build
-order and the decisions are in [`implementation_plan.md`](implementation_plan.md).
-
-The screenshots above were captured at 1600×1000 against that cluster with each
-scenario executed first. The utility is fictional and the data fully synthetic, so no
-customer identity appears in them.

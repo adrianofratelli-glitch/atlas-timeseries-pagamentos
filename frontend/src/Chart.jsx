@@ -3,14 +3,16 @@ import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
 // uPlot e não uma biblioteca React de gráfico: a série chega a milhares de pontos e
-// redesenha a cada mudança de faixa. React nunca re-renderiza o canvas — só entrega
+// redesenha a cada mudança de janela. React nunca re-renderiza o canvas — só entrega
 // dados novos ao ref.
 
 const CORES = {
-  entregue: '#0498ec',
-  registrado: '#00ed64',
-  medido: '#00ed64',
-  preenchido: '#ffc010',
+  p50: '#00ed64',
+  p95: '#0498ec',
+  p99: '#ffc010',
+  recusa: '#ff6960',
+  base: '#889397',
+  reconstruido: '#ffc010',
 }
 
 function fmt(ts) {
@@ -19,72 +21,74 @@ function fmt(ts) {
   })
 }
 
-function montarDados(mode, points) {
-  const x = points.map((p) => new Date(p.ts).getTime() / 1000)
-  if (mode === 'balance') {
-    return [x, points.map((p) => p.entregue), points.map((p) => p.registrado)]
-  }
-  // Ponto reconstruído nunca parece medido: série própria, tracejada, âmbar. Os
-  // vizinhos entram nas duas séries para que as linhas se encontrem sem degrau.
-  const medido = points.map((p) => (p.filled ? null : p.kwh))
-  const preenchido = points.map((p, i) => {
-    if (p.filled) return p.kwh
-    return points[i - 1]?.filled || points[i + 1]?.filled ? p.kwh : null
-  })
-  return [x, medido, preenchido]
+// Cada modo declara suas séries e como extrair os dados dos pontos. Manter isso numa
+// tabela evita um `if` por série espalhado pelo componente.
+const MODOS = {
+  latencia: {
+    series: [
+      { key: 'p50', label: 'p50 (ms)', stroke: CORES.p50 },
+      { key: 'p95', label: 'p95 (ms)', stroke: CORES.p95 },
+      { key: 'p99', label: 'p99 (ms)', stroke: CORES.p99, width: 2.5 },
+    ],
+  },
+  saude: {
+    series: [
+      { key: 'taxa_recusa', label: 'recusa (%)', stroke: CORES.recusa, width: 2.5 },
+      { key: 'recusa_base', label: 'linha de base (%)', stroke: CORES.base, dash: [5, 4] },
+    ],
+  },
+  volume: {
+    series: [
+      { key: 'eventos', label: 'eventos', stroke: CORES.p95, width: 2 },
+    ],
+  },
 }
 
 export default function Chart({ mode, points, minHeight = 240, onHover }) {
   const hostRef = useRef(null)
   const plotRef = useRef(null)
 
-  // O callback e os pontos mudam a cada render; guardados em ref, não obrigam a
-  // recriar o gráfico — recriar a cada poll de 1,5 s matava o cursor e o zoom.
   const hoverRef = useRef(onHover)
   hoverRef.current = onHover
   const pointsRef = useRef(points)
   pointsRef.current = points
 
-  const dados = useMemo(() => montarDados(mode, points), [mode, points])
+  const spec = MODOS[mode] ?? MODOS.latencia
+  const dados = useMemo(() => {
+    const x = points.map((p) => new Date(p.ts).getTime() / 1000)
+    return [x, ...spec.series.map((s) => points.map((p) => p[s.key] ?? null))]
+  }, [points, spec])
 
   useEffect(() => {
     const host = hostRef.current
     if (!host) return undefined
 
+    // A legenda do uPlot é irmã do canvas dentro do mesmo host: sem descontar a
+    // altura dela, ela some atrás da gaveta de query.
     const ALTURA_LEGENDA = 34
     const medir = () => ({
       width: host.clientWidth || 800,
       height: Math.max((host.clientHeight || 0) - ALTURA_LEGENDA, minHeight),
     })
 
-    const series = mode === 'balance'
-      ? [
-        { label: 'instante', value: (u, v) => (v == null ? '—' : fmt(v * 1000)) },
-        { label: 'entregue (kWh)', stroke: CORES.entregue, width: 2 },
-        { label: 'registrado (kWh)', stroke: CORES.registrado, width: 2 },
-      ]
-      : [
-        { label: 'instante', value: (u, v) => (v == null ? '—' : fmt(v * 1000)) },
-        { label: 'medido (kWh)', stroke: CORES.medido, width: 2 },
-        { label: 'reconstruído (kWh)', stroke: CORES.preenchido, width: 2, dash: [6, 4] },
-      ]
-
     const opts = {
       ...medir(),
       padding: [12, 12, 0, 0],
       cursor: { drag: { x: true, y: false } },
       legend: { live: true },
-      series,
-      // A diferença é a banda entre as duas linhas: é o número que interessa, então é
-      // a forma que o olho encontra primeiro — não uma terceira linha.
-      bands: mode === 'balance' ? [{ series: [1, 2], fill: 'rgba(255, 105, 96, 0.22)' }] : [],
+      series: [
+        { label: 'instante', value: (u, v) => (v == null ? '—' : fmt(v * 1000)) },
+        ...spec.series.map((s) => ({
+          label: s.label, stroke: s.stroke, width: s.width ?? 2, dash: s.dash,
+        })),
+      ],
       axes: [
         { stroke: '#889397', grid: { stroke: 'rgba(61,79,88,0.5)' }, ticks: { stroke: '#3d4f58' } },
         { stroke: '#889397', grid: { stroke: 'rgba(61,79,88,0.35)' }, ticks: { stroke: '#3d4f58' } },
       ],
+      // Leitura do instante sob o cursor: a legenda fica no rodapé e o apresentador
+      // precisa do valor junto das métricas, no alto da tela.
       hooks: {
-        // Leitura do instante sob o cursor: a legenda do uPlot fica no rodapé e o
-        // apresentador precisa do valor junto das métricas, no alto da tela.
         setCursor: [(u) => {
           const i = u.cursor.idx
           const ponto = i == null ? null : pointsRef.current[i]
@@ -93,7 +97,7 @@ export default function Chart({ mode, points, minHeight = 240, onHover }) {
       },
     }
 
-    plotRef.current = new uPlot(opts, montarDados(mode, pointsRef.current), host)
+    plotRef.current = new uPlot(opts, dados, host)
     const observer = new ResizeObserver(() => plotRef.current?.setSize(medir()))
     observer.observe(host)
     return () => {
@@ -102,9 +106,11 @@ export default function Chart({ mode, points, minHeight = 240, onHover }) {
       plotRef.current = null
       hoverRef.current?.(null)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, minHeight])
 
-  // Dado novo não recria o gráfico: só troca a série.
+  // Dado novo não recria o gráfico: só troca a série. Recriar a cada poll matava
+  // cursor e zoom no meio da apresentação.
   useEffect(() => {
     plotRef.current?.setData(dados)
   }, [dados])

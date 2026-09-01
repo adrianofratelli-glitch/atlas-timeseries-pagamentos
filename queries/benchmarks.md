@@ -1,114 +1,106 @@
 # Measured numbers
 
 Everything here was measured against the demo Atlas cluster (M20 — 4 GB RAM, 2 vCPU,
-MongoDB 9.0), shared with other demonstration databases. Nothing is estimated. Raw
-output in `bench-results.json`, `bucket-experiment.json` and `../tests/stress-results.json`.
+MongoDB 9.0), shared with other demonstration databases. Nothing is estimated. Raw output
+in `bench-results.json`, `bucket-experiment.json`, `cardinality-experiment.json` and
+`../tests/stress-results.json`.
 
-Re-measure rather than copy forward when the cluster, the volume or the reading
-interval changes.
+Re-measure rather than copy forward when the cluster, the volume or the traffic shape
+changes.
+
+## The two decisions that were measured before any code
+
+### Bucket span, and the order events are written in
+
+`queries/bucket_experiment.py` — the same 400 000 events loaded six times.
+[`../docs/adr/0001-bucketing.md`](../docs/adr/0001-bucketing.md) has the full table.
+
+| Variant | B/event | Ratio vs plain | Ingest | Health query |
+|---|---:|---:|---:|---:|
+| plain collection | 52.92 | 1.0× | 28 091/s | 75.2 ms |
+| `granularity: "seconds"` | 24.13 | 2.19× | 6 593/s | 32.2 ms |
+| `granularity: "minutes"` | 34.16 | 1.55× | 6 211/s | 24.1 ms |
+| `bucketMaxSpanSeconds: 3600` | 26.81 | 1.97× | 5 332/s | 32.7 ms |
+| `bucketMaxSpanSeconds: 86400` | 33.00 | 1.60× | 6 302/s | **19.2 ms** |
+| 86400, written series-contiguous | **10.90** | **4.86×** | **12 308/s** | 20.7 ms |
+
+Write order, isolated on 1 000 000 events over 1 296 routes:
+
+| Writer | B/event | Ingest |
+|---|---:|---:|
+| generation order, 25 k batches | 33.79 | 8 672/s |
+| sorted inside each 25 k batch | 29.88 | 7 905/s |
+| sorted globally | **16.84** | **11 733/s** |
+
+**Two numbers to keep honest about.** The plain collection ingests 4.5× faster than the
+time series collection — time series trades write throughput for storage and query
+shape. And the 2× from global sorting only partly survives in a streaming writer:
+buffering 300 events per route on the real load gave **22.86 B/event against 24.26**, six
+percent, because a route's bucket is still filled across several flushes. The saving
+scales with how much of a bucket the writer delivers per call.
+
+### Where the account goes
+
+`queries/cardinality_experiment.py` — 400 000 events over 2 000 000 accounts, both models
+from the identical document list.
+[`../docs/adr/0002-cardinalidade.md`](../docs/adr/0002-cardinalidade.md).
+
+| | account as field + index | account inside `meta` |
+|---|---:|---:|
+| Buckets | **19 127** | 399 924 |
+| Events per bucket | 20.9 | **1.0** |
+| Index | **3.59 MB** | 98.38 MB |
+| Bytes per event | **29.84** | 85.27 |
+| Ingestion | **9 143/s** | 1 255/s |
+| Account velocity (p50) | **517 ms** | 618 ms |
+| p99 per provider (p50) | **427 ms** | 731 ms |
+
+The account in the meta field costs 2.9× the storage, **27× the index** and 7× the write
+throughput — and it is slower at the per-account query it exists to accelerate. The
+absolute latencies in this table were measured while the cluster was also loading the
+main dataset; they are valid as a comparison between the two models, which is what the
+ADR needs.
 
 ## The base
 
 | | |
 |---|---:|
-| Measurements | **58 820 400** |
-| Meters | 19 980 + 444 boundary meters |
-| Period | 30 days, one reading per 15 min |
-| Load time | 1 292 s (**45 531 measurements/s**, single process) |
-| Storage | **464 MB** data + **80 MB** index |
-| Bytes per measurement | **7.9** |
+| Events | *(re-measured after the current load; the loader prints the final count)* |
+| Providers | 44 across PIX, card and TED |
+| Routes (`meta` combinations) | ~2 900 |
+| Accounts | 2 000 000 |
+| Period | 7 days at ~75 events/s average |
+| Ingestion, 4 partitioned writers | ~15 600/s |
+| Bytes per event | 22.86 |
 
-The bucket layout (`bucketMaxSpanSeconds: 86400`) was chosen by measurement in
-[`../docs/adr/0001-bucketing.md`](../docs/adr/0001-bucketing.md), which predicted
-~430 MB from a 7-day sample. The full load came in at 464 MB — the extrapolation held.
+## Query latency
 
-## Storage against a plain collection
+> **Pending.** The full-volume run of `queries/bench.py` is executed after the current
+> load finishes and the cluster goes quiet. Until this section carries the table, no
+> query latency from this PoV should appear in front of a customer.
+>
+> The reason for the wait is itself a measured finding: a bench run started immediately
+> after a bulk load reported a **281 ms network floor** and every query inflated to
+> match. Re-measured minutes later on a quiet cluster, the floor was 8.5 ms.
+> Benchmarking right after a bulk load measures the load, not the workload.
 
-Same measurements, same day, written twice. `readings_flat` holds one day of the
-same data, so the comparison is per measurement, not in absolute size.
+Reproduce with:
 
-| | `readings` (time series) | `readings_flat` (plain) |
-|---|---:|---:|
-| Measurements | 58 820 400 | 1 960 680 |
-| Data | 464.5 MB | 109.2 MB |
-| Index | 80.4 MB | 118.2 MB |
-| Bytes per measurement (data) | **7.90** | 55.67 |
-| Bytes per measurement (with index) | **9.27** | 116.0 |
-| Buckets | 612 720 | — |
+```bash
+.venv/bin/python queries/bench.py --runs 20
+```
 
-**7.05× less storage per measurement, 12.52× counting the index.**
-
-The index is where most of the difference lives: 80 MB covering 58.8 M measurements
-against 118 MB covering 1.96 M. An index on a time series collection indexes buckets —
-612 720 of them here — not measurements, so it is roughly ninety times smaller per
-measurement. On a metering base that keeps years of history, that line alone changes
-the disk tier.
-
-This is MongoDB against MongoDB. It is a fact about the bucket format, not a claim
-about InfluxDB or TimescaleDB — see `../LIMITATIONS.md`.
-
-## Latency
-
-30 runs each, after warm-up. **Network floor: p50 8.5 ms** for a `hello` from the
-presenting host — subtract it before calling any of these a database number.
-
-| Query | p50 | p95 | above the floor |
-|---|---:|---:|---:|
-| Load curve, 1 day, one meter | 11.5 ms | 13.8 ms | 3.0 ms |
-| Load curve, 1 day, with `$densify`/`$fill` | 12.2 ms | 12.7 ms | 3.7 ms |
-| Load curve, 30 days, one meter | 16.3 ms | 18.1 ms | 7.8 ms |
-| Transformer balance, 1 day | 19.2 ms | 22.5 ms | 10.7 ms |
-| Transformer balance, 7 days | 69.9 ms | 85.8 ms | 61.4 ms |
-| Transformer balance, 30 days | 336.9 ms | 511.3 ms | 328.4 ms |
-
-Reading these honestly:
-
-- **The curve queries are mostly network.** 3 ms of server work over an 8.5 ms round
-  trip, and thirty days of data costs 5 ms more than one day. They are evidence that
-  the bucket index works, not evidence of raw speed.
-- **Gap reconstruction is nearly free.** `$densify` + `$fill` add 0.7 ms to the same
-  query. Doing it in the application would cost a round trip per gap plus the transfer
-  of the raw series.
-- **The balance is the real query.** It touches every meter under the transformer:
-  ~45 meters × 96 readings × 30 days ≈ 130 000 measurements unpacked, grouped twice
-  and run through `$setWindowFields`, in 337 ms. It scales roughly linearly with the
-  window, which is why the demo defaults to 7 days.
-
-### A measurement trap worth knowing
-
-The first bench run, executed immediately after the 58.8 M load finished, reported a
-**network floor of 281 ms** and every query proportionally inflated. Nothing was wrong
-with the queries — the cluster was still checkpointing the bulk load. Re-measured a few
-minutes later on the same data, the floor was back to 8.5 ms.
-
-Benchmarking right after a bulk load measures the load, not the workload. Wait for the
-cluster to go quiet, and always measure the floor in the same run.
+The output reports the network floor in the same run, and every latency should be read
+against it — several of these queries sit within a few milliseconds of the round trip.
 
 ## Under mixed load
 
-`tests/stress.py`, one analytic client (balance, 7–30 days) for every three interactive
-clients (load curve), 12 s per level.
-
-| Clients | rps | interactive p50 | interactive p95 | analytic p50 | refused (429) |
-|---:|---:|---:|---:|---:|---:|
-| 4 | 140 | 23.4 ms | 34.7 ms | 341 ms | 0 |
-| 8 | 260 | 23.8 ms | 36.4 ms | 279 ms | 0 |
-| 16 | 386 | 28.8 ms | 52.4 ms | 650 ms | 3 |
-| 32 | 439 | 49.8 ms | 80.4 ms | 777 ms | 48 |
-| 64 | 451 | 101.7 ms | 144.1 ms | 811 ms | 162 |
-
-No 5xx and no timeout at any level. The point of the table is the two middle columns:
-at 64 concurrent clients the analytic path is at 811 ms and the interactive path is
-still at 144 ms p95, because `app/services/limits.py` gives the balance three slots and
-refuses the excess with a 429 in 750 ms.
-
-Without that bulkhead the analytic queries share the queue and take the interactive
-path with them — the same failure the graph PoV measured and fixed the same way.
-
-## Reproducing
+> **Pending** the same full-volume run. `tests/stress.py` drives three interactive
+> clients (account velocity) for every analytic one (provider health) and reports whether
+> the analytic path takes the interactive path down with it. The bulkhead in
+> `backend/app/services/limits.py` gives the analytic queue three slots and refuses the
+> excess with a `429` after 750 ms.
 
 ```bash
-.venv/bin/python queries/bench.py --runs 30          # rewrites bench-results.json
-.venv/bin/python queries/bucket_experiment.py        # the ADR 0001 table
-.venv/bin/python tests/stress.py --max 64            # the table above
+.venv/bin/python tests/stress.py --max 64
 ```

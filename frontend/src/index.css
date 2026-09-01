@@ -229,3 +229,27 @@ body {
 .u-legend { color: var(--text-sec); font-size: 12px; }
 .u-legend .u-marker { border-radius: 2px; }
 .u-title, .u-label { color: var(--text-muted); }
+
+/* ------------------------------------------------- busca e chips do velocity */
+.explica { color: var(--text-sec); font-size: 12.5px; margin: 0 0 10px; }
+.linha-busca { display: flex; gap: 8px; margin-bottom: 10px; }
+.linha-busca input {
+  flex: 1; min-height: 40px; padding: 0 10px; border-radius: 8px;
+  background: var(--bg-card); color: var(--text-pri);
+  border: 1px solid var(--border-subtle); font-family: var(--mono); font-size: 12.5px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.chip {
+  background: var(--bg-card); border: 1px solid var(--border-subtle); color: var(--text-sec);
+  border-radius: 999px; padding: 5px 10px; font-family: var(--mono); font-size: 11.5px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); color: var(--text-pri); }
+.tabela { width: 100%; border-collapse: collapse; font-size: 12px;
+  font-variant-numeric: tabular-nums; }
+.tabela th { text-align: left; color: var(--text-muted); font-weight: 500;
+  padding: 6px 4px; border-bottom: 1px solid var(--border-subtle); }
+.tabela td { padding: 7px 4px; border-bottom: 1px solid rgba(61, 79, 88, 0.5);
+  font-family: var(--mono); }
+/* Cor nunca é o único indicador: a linha fora do SLA também leva o sinal ⚠. */
+.tabela tr.fora td { color: var(--danger); }

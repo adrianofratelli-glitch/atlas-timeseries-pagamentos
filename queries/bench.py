@@ -1,8 +1,12 @@
 """Medições no volume cheio. Regrava queries/bench-results.json.
 
-Toda latência que aparece na frente de um cliente sai daqui, medida contra o
-cluster real, com o piso de rede medido junto — sem ele, "9,7 ms" parece
-desempenho de banco quando é, quase inteiro, ida e volta de rede.
+Toda latência que aparece na frente de um cliente sai daqui, medida contra o cluster
+real, com o piso de rede medido junto — sem ele, "12 ms" parece desempenho de banco
+quando é, quase inteiro, ida e volta de rede.
+
+Reusa os módulos de `backend/app/db/` em vez de reescrever os pipelines: medir uma
+consulta parecida com a de produção, mas não igual, é como se descobre em campo que
+o número do slide não valia.
 """
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ import os
 import statistics
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "data-generator"))
@@ -22,12 +26,9 @@ import common  # noqa: E402
 
 def percentis(amostras: list[float]) -> dict:
     amostras = sorted(amostras)
-    return {
-        "p50": round(statistics.median(amostras), 1),
-        "p95": round(amostras[max(int(len(amostras) * 0.95) - 1, 0)], 1),
-        "min": round(amostras[0], 1),
-        "max": round(amostras[-1], 1),
-    }
+    return {"p50": round(statistics.median(amostras), 1),
+            "p95": round(amostras[max(int(len(amostras) * 0.95) - 1, 0)], 1),
+            "min": round(amostras[0], 1), "max": round(amostras[-1], 1)}
 
 
 def medir(fn, runs: int) -> dict:
@@ -43,68 +44,74 @@ def medir(fn, runs: int) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", type=int, default=30)
+    ap.add_argument("--runs", type=int, default=20)
     ap.add_argument("--db", default=None)
     args = ap.parse_args()
 
-    os.environ.setdefault("MONGODB_DB", args.db or os.getenv("MONGODB_DB", "energia_medicao"))
-    from app.db import balance, curve  # noqa: E402  (depende do MONGODB_DB acima)
-    from app.db.ranges import anchor  # noqa: E402
+    os.environ.setdefault("MONGODB_DB", args.db or os.getenv("MONGODB_DB", "trilho_pagamentos"))
+    from app.db import latency, providers, velocity  # noqa: E402
 
     d = common.db(args.db)
-    info = d.dataset_info.find_one({"_id": "readings"}) or {}
-    medidor = d.meters.find_one({"register_factor": 1.0}, sort=[("meter_id", 1)])
-    cenario = d.loss_scenarios.find_one(sort=[("expected_gap_pct", -1)])
-    end = anchor()
+    info = d.dataset_info.find_one({"_id": "payment_events"}) or {}
+    cenario = d.degradation_scenarios.find_one({"kind": "recusa"})
+    conta = d.demo_accounts.find_one(sort=[("eventos_24h", -1)])
+    provedor = cenario["provedor_id"] if cenario else \
+        d.provedores.find_one()["provedor_id"]
 
     resultados = {
         "measured_at": datetime.now(timezone.utc).isoformat(),
         "database": os.environ["MONGODB_DB"],
-        "measurements": info.get("measurements") or d.readings.estimated_document_count(),
-        "meters": info.get("meters"),
+        "events": info.get("events") or d.payment_events.estimated_document_count(),
         "days": info.get("days"),
+        "accounts": info.get("accounts"),
+        "providers": info.get("providers"),
         "runs": args.runs,
-        "network_floor_ms": None,
+        "network_floor_ms": medir(lambda: d.command("hello"), args.runs),
         "cases": {},
     }
 
-    resultados["network_floor_ms"] = medir(lambda: d.command("hello"), args.runs)
-
     casos = {
-        "curva_1_dia": lambda: curve.load_curve(medidor["meter_id"], 1, False),
-        "curva_1_dia_preenchida": lambda: curve.load_curve(medidor["meter_id"], 1, True),
-        "curva_30_dias": lambda: curve.load_curve(medidor["meter_id"], 30, False),
-        "balanco_1_dia": lambda: balance.transformer_balance(cenario["transformer_id"], 1),
-        "balanco_7_dias": lambda: balance.transformer_balance(cenario["transformer_id"], 7),
-        "balanco_30_dias": lambda: balance.transformer_balance(cenario["transformer_id"], 30),
+        "latencia_pix_1h": lambda: latency.serie("pix", None, 1, False),
+        "latencia_pix_24h": lambda: latency.serie("pix", None, 24, False),
+        "latencia_provedor_24h": lambda: latency.serie(None, provedor, 24, False),
+        "latencia_provedor_24h_preenchida": lambda: latency.serie(None, provedor, 24, True),
+        "latencia_pix_7d": lambda: latency.serie("pix", None, 168, False),
+        "saude_provedor_24h": lambda: providers.saude(provedor, 24),
+        "saude_provedor_7d": lambda: providers.saude(provedor, 168),
+        "ranking_24h": lambda: providers.ranking(24),
+        "velocity_conta": lambda: velocity.features(conta["conta_id"] if conta
+                                                    else "C000000001"),
     }
     for nome, fn in casos.items():
         print(f"  {nome} ...", flush=True)
         resultados["cases"][nome] = medir(fn, args.runs)
 
-    st = next(d.readings.aggregate([{"$collStats": {"storageStats": {}}}]))["storageStats"]
+    st = next(d.payment_events.aggregate(
+        [{"$collStats": {"storageStats": {}}}]))["storageStats"]
+    n = resultados["events"]
     resultados["storage"] = {
         "storage_bytes": st["storageSize"],
         "index_bytes": st.get("totalIndexSize", 0),
-        "bytes_per_measurement": round(st["storageSize"] / max(resultados["measurements"], 1), 2),
+        "bytes_per_event": round(st["storageSize"] / max(n, 1), 2),
         "buckets": (st.get("timeseries") or {}).get("bucketCount"),
     }
 
-    out = os.path.join(ROOT, "queries", "bench-results.json")
-    with open(out, "w") as fh:
+    saida = os.path.join(ROOT, "queries", "bench-results.json")
+    with open(saida, "w") as fh:
         json.dump(resultados, fh, indent=2)
 
     piso = resultados["network_floor_ms"]["p50"]
-    print(f'\n{resultados["measurements"]:,} medições · {resultados["meters"]} medidores · '
-          f'{resultados["days"]} dias · piso de rede p50 {piso} ms\n')
-    print(f'{"consulta":28} {"p50":>8} {"p95":>8} {"acima do piso":>15}')
-    print("-" * 63)
+    print(f'\n{resultados["events"]:,} eventos · {resultados["days"]} dias · '
+          f'{resultados["providers"]} provedores · piso de rede p50 {piso} ms\n')
+    print(f'{"consulta":34} {"p50":>9} {"p95":>9} {"acima do piso":>15}')
+    print("-" * 71)
     for nome, v in resultados["cases"].items():
-        print(f'{nome:28} {v["p50"]:7.1f}ms {v["p95"]:7.1f}ms {v["p50"] - piso:14.1f}ms')
-    print(f'\narmazenamento: {resultados["storage"]["bytes_per_measurement"]} B/medição, '
+        print(f'{nome:34} {v["p50"]:8.1f}ms {v["p95"]:8.1f}ms {v["p50"] - piso:14.1f}ms')
+    print(f'\narmazenamento: {resultados["storage"]["bytes_per_event"]} B/evento, '
           f'{resultados["storage"]["storage_bytes"] / 1e6:,.0f} MB + '
-          f'{resultados["storage"]["index_bytes"] / 1e6:,.0f} MB de índice')
-    print(out)
+          f'{resultados["storage"]["index_bytes"] / 1e6:,.0f} MB de índice, '
+          f'{resultados["storage"]["buckets"]:,} buckets')
+    print(saida)
 
 
 if __name__ == "__main__":

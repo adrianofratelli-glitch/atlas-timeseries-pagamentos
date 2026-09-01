@@ -17,14 +17,15 @@ from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError, ExecutionTimeout
 
 from app import config
-from app.db import assets, balance, cases, curve, storage
+from app.db import incidents, latency, providers, registry, storage, velocity
 from app.db.client import db
 from app.db.ranges import RangeError
 from app.services import limits
 from app.services.alerts import hub
 from app.services.live import feed
 
-app = FastAPI(title="Medição inteligente · MongoDB Atlas time series", version="0.1.0")
+app = FastAPI(title="Telemetria do trilho de pagamentos · MongoDB Atlas time series",
+              version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 
@@ -43,6 +44,17 @@ def _json(value):
     if isinstance(value, datetime):
         return value.isoformat()
     return str(value)
+
+
+_COLECOES: tuple[float, set[str]] = (0.0, set())
+
+
+def _colecoes(d) -> set[str]:
+    global _COLECOES
+    agora = time.time()
+    if agora - _COLECOES[0] > 30.0:
+        _COLECOES = (agora, set(d.list_collection_names()))
+    return _COLECOES[1]
 
 
 def _timed(fn, kind: str):
@@ -68,88 +80,163 @@ def health():
     d = db()
     try:
         d.command("ping")
-        collections = set(d.list_collection_names())
-        # A contagem vem de dataset_info, gravado pelo gerador. Em uma coleção time
-        # series com 58 M medições, estimated_document_count() leva ~3 s — e o health
-        # é a primeira chamada da tela, então esses 3 s eram 3 s de "sem conexão"
-        # aparecendo para a plateia.
-        info = d.dataset_info.find_one({"_id": "readings"}) or {}
-        readings = info.get("measurements")
-        if readings is None:
-            readings = d.readings.estimated_document_count() if "readings" in collections else 0
+        # list_collection_names() sobre este banco leva ~1 s e o health é a primeira
+        # chamada da tela. O conjunto de coleções não muda durante uma demo.
+        colecoes = _colecoes(d)
+        # A contagem vem de dataset_info: estimated_document_count() sobre dezenas de
+        # milhões custa segundos, e o health é a primeira chamada da tela.
+        info = d.dataset_info.find_one({"_id": "payment_events"}) or {}
+        eventos = info.get("events")
+        if eventos is None:
+            eventos = (d.payment_events.estimated_document_count()
+                       if "payment_events" in colecoes else 0)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail={"reason": str(exc)}) from exc
     return {
         "status": "ok",
         "database": config.MONGODB_DB,
-        "readings": readings,
-        "flat_sample": "readings_flat" in collections,
+        "events": eventos,
+        "days": info.get("days"),
+        "accounts": info.get("accounts"),
+        "flat_sample": "payment_events_flat" in colecoes,
         "change_stream": hub.state,
-        "live": feed.status(),
         "change_stream_error": hub.last_error,
+        "live": feed.status(),
         "archive_enabled": config.ARCHIVE_ENABLED,
-        "thresholds": {"loss_pct": config.LOSS_THRESHOLD_PCT,
-                       "min_windows": config.LOSS_MIN_WINDOWS},
+        "detector": {"z_threshold": config.Z_SCORE_THRESHOLD,
+                     "min_windows": config.Z_MIN_WINDOWS},
     }
 
 
 @app.get("/health/live")
-def live():
+def live_probe():
     return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------- cadastro
-@app.get("/api/transformers")
-def list_transformers(limit: int = Query(200, ge=1, le=1000)):
-    return {"transformers": assets.transformers(limit)}
+@app.get("/api/providers")
+def list_providers(canal: str | None = None, limit: int = Query(100, ge=1, le=500)):
+    return {"providers": registry.provedores(canal, limit)}
 
 
-@app.get("/api/transformers/{transformer_id}/meters")
-def list_meters(transformer_id: str, limit: int = Query(500, ge=1, le=2000)):
-    return {"meters": assets.meters_of(transformer_id, limit)}
-
-
-@app.get("/api/meters/{meter_id}")
-def get_meter(meter_id: str):
-    m = assets.meter(meter_id)
-    if not m:
-        raise HTTPException(status_code=404, detail={"reason": "medidor não encontrado"})
-    return m
+@app.get("/api/providers/{provedor_id}")
+def get_provider(provedor_id: str):
+    p = registry.provedor(provedor_id)
+    if not p:
+        raise HTTPException(status_code=404, detail={"reason": "provedor não encontrado"})
+    return p
 
 
 @app.get("/api/scenarios")
 def list_scenarios():
     """Verdade de terra dos cenários plantados. Rotulada como tal na tela."""
-    return {"scenarios": assets.scenarios(), "demo_meters": assets.demo_meters(),
-            "aviso": "verdade de terra do gerador; a demo confere o balanço contra ela"}
+    return {"scenarios": registry.cenarios(), "demo_accounts": registry.contas_demo(),
+            "aviso": "verdade de terra do gerador; a tela confere a detecção contra ela"}
 
 
-# ------------------------------------------------------------------------ série
-@app.get("/api/curve")
-def load_curve(meter_id: str, days: float = Query(1.0, gt=0), fill: bool = False,
-               live: bool = False):
-    return _timed(lambda: curve.load_curve(meter_id, days, fill, live), "interativo")
+# -------------------------------------------------------------------- telemetria
+@app.get("/api/latency")
+def latency_series(canal: str | None = None, provedor: str | None = None,
+                   hours: float = Query(24.0, gt=0), fill: bool = False):
+    return _timed(lambda: latency.serie(canal, provedor, hours, fill), "interativo")
 
 
-@app.get("/api/balance")
-def transformer_balance(transformer_id: str, days: float = Query(7.0, gt=0),
-                        live: bool = False):
-    return _timed(lambda: balance.transformer_balance(transformer_id, days, live),
-                  "analitico")
+@app.get("/api/providers/{provedor_id}/health")
+def provider_health(provedor_id: str, hours: float = Query(24.0, gt=0)):
+    return _timed(lambda: providers.saude(provedor_id, hours), "analitico")
 
 
-# ------------------------------------------------------------------- ao vivo
+@app.get("/api/ranking")
+def provider_ranking(hours: float = Query(24.0, gt=0),
+                     limit: int = Query(40, ge=1, le=100)):
+    return _timed(lambda: providers.ranking(hours, limit), "analitico")
+
+
+@app.get("/api/velocity/{conta_id}")
+def account_velocity(conta_id: str):
+    """Feature de antifraude: roda dentro do fluxo que decide a autorização."""
+    return _timed(lambda: velocity.features(conta_id), "interativo")
+
+
+@app.get("/api/storage")
+def storage_comparison(force: bool = False):
+    return _timed(lambda: storage.comparison(force), "storage")
+
+
+# ------------------------------------------------------------------- incidentes
+class AbrirIncidente(BaseModel):
+    provedor_id: str = Field(min_length=3, max_length=64)
+    canal: str = Field(min_length=2, max_length=32)
+    z_recusa: float = Field(ge=-100, le=1000)
+    z_p99: float = Field(ge=-100, le=1000)
+    janelas: int = Field(ge=0, le=10000)
+    taxa_recusa: float = Field(ge=0, le=100)
+    p99_ms: float = Field(ge=0, le=600000)
+    eventos: int = Field(ge=0)
+    aberto_por: str = Field(default="demo", max_length=64)
+    nota: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/api/incidents")
+def create_incident(body: AbrirIncidente):
+    try:
+        return incidents.abrir(body.provedor_id, body.canal, body.z_recusa, body.z_p99,
+                               body.janelas, body.taxa_recusa, body.p99_ms,
+                               body.eventos, body.aberto_por, body.nota)
+    except DuplicateKeyError as exc:
+        raise HTTPException(status_code=409, detail={"reason": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail={"reason": str(exc)}) from exc
+
+
+@app.get("/api/incidents")
+def list_incidents(limit: int = Query(50, ge=1, le=200)):
+    return {"incidents": incidents.recentes(limit)}
+
+
+@app.post("/api/incidents/{incident_id}/close")
+def close_incident(incident_id: str, outcome: str = Query("confirmado", max_length=64),
+                   by: str = Query("demo", max_length=64)):
+    inc = incidents.encerrar(incident_id, outcome, by)
+    if not inc:
+        raise HTTPException(status_code=404,
+                            detail={"reason": "incidente aberto não encontrado"})
+    return inc
+
+
+@app.post("/api/demo/reset")
+def reset():
+    # Reiniciar a demo também para e apaga a ingestão ao vivo: senão o próximo
+    # roteiro começa com a série da apresentação anterior ainda na tela.
+    resultado = incidents.reset_demo()
+    resultado["ao_vivo"] = feed.clear()
+    return resultado
+
+
+# ---------------------------------------------------------------------- ao vivo
 class LiveStart(BaseModel):
-    transformer_id: str = Field(min_length=3, max_length=64)
+    canal: str = Field(min_length=2, max_length=32)
+    eps: float = Field(default=40.0, gt=0, le=5000)
+
+
+class LiveDegrade(BaseModel):
+    provedor_id: str | None = None
+    fator_recusa: float = Field(default=6.0, ge=1, le=200)
+    fator_latencia: float = Field(default=3.5, ge=1, le=200)
 
 
 @app.post("/api/live/start")
 def live_start(body: LiveStart):
-    if not db().transformers.find_one({"transformer_id": body.transformer_id},
-                                      {"_id": 1}):
-        raise HTTPException(status_code=404,
-                            detail={"reason": "transformador não encontrado"})
-    return feed.start(body.transformer_id)
+    if body.canal not in ("pix", "cartao", "ted"):
+        raise HTTPException(status_code=422, detail={"reason": "canal inválido"})
+    return feed.start(body.canal, body.eps)
+
+
+@app.post("/api/live/degrade")
+def live_degrade(body: LiveDegrade):
+    if body.provedor_id and not registry.provedor(body.provedor_id):
+        raise HTTPException(status_code=404, detail={"reason": "provedor não encontrado"})
+    return feed.degradar(body.provedor_id, body.fator_recusa, body.fator_latencia)
 
 
 @app.post("/api/live/stop")
@@ -167,54 +254,10 @@ def live_status():
     return feed.status()
 
 
-@app.get("/api/storage")
-def storage_comparison():
-    return _timed(lambda: storage.comparison(), "storage")
-
-
-# ------------------------------------------------------------------------ casos
-class OpenCase(BaseModel):
-    meter_id: str = Field(min_length=3, max_length=64)
-    transformer_id: str = Field(min_length=3, max_length=64)
-    gap_kwh: float = Field(ge=0)
-    gap_pct: float = Field(ge=0, le=100)
-    windows: int = Field(ge=0, le=10000)
-    opened_by: str = Field(default="demo", max_length=64)
-    note: str | None = Field(default=None, max_length=500)
-
-
-@app.post("/api/cases")
-def create_case(body: OpenCase):
-    try:
-        return cases.open_case(body.meter_id, body.transformer_id, body.gap_kwh,
-                               body.gap_pct, body.windows, body.opened_by, body.note)
-    except DuplicateKeyError as exc:
-        raise HTTPException(status_code=409, detail={"reason": str(exc)}) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail={"reason": str(exc)}) from exc
-
-
-@app.get("/api/cases")
-def list_cases(limit: int = Query(50, ge=1, le=200)):
-    return {"cases": cases.recent(limit)}
-
-
-@app.post("/api/cases/{case_id}/close")
-def finish_case(case_id: str, outcome: str = Query("confirmado", max_length=64),
-                by: str = Query("demo", max_length=64)):
-    case = cases.close_case(case_id, outcome, by)
-    if not case:
-        raise HTTPException(status_code=404, detail={"reason": "caso aberto não encontrado"})
-    return case
-
-
-@app.post("/api/demo/reset")
-def reset():
-    # Reiniciar a demo também para e apaga a ingestão ao vivo: senão o próximo
-    # roteiro começa com a série da apresentação anterior ainda na tela.
-    resultado = cases.reset_demo()
-    resultado["ao_vivo"] = feed.clear()
-    return resultado
+@app.get("/api/live/health/{provedor_id}")
+def live_provider_health(provedor_id: str):
+    """Saúde do provedor sobre a coleção ao vivo, em bins de 5 s."""
+    return _timed(lambda: providers.saude_ao_vivo(provedor_id), "analitico")
 
 
 # ---------------------------------------------------------------------- alertas
@@ -242,5 +285,5 @@ def alert_stream():
 
 @app.get("/api/alerts")
 def list_alerts(limit: int = Query(50, ge=1, le=200)):
-    rows = list(db().loss_alerts.find({}, {"_id": 0}).sort("at", -1).limit(limit))
+    rows = list(db().incident_alerts.find({}, {"_id": 0}).sort("at", -1).limit(limit))
     return {"alerts": json.loads(json.dumps(rows, default=_json))}

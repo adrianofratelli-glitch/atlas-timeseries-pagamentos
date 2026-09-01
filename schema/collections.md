@@ -3,84 +3,76 @@
 Why the documents look the way they do. The operational detail — indexes, pipelines,
 seeds — is in [`../docs/briefing/02-mongodb.md`](../docs/briefing/02-mongodb.md).
 
-## The split: measurement, asset, opinion
+## The split: event, route, opinion
 
-Three kinds of document, three collections, on purpose.
+**The event** (`payment_events`, time series) is a fact: one authorised transaction,
+written once, never updated. The backend never writes to it at all. Time series
+collections restrict updates and deletes precisely because that is the contract.
 
-**The measurement** (`readings`, time series) is a fact from the field. It is written
-once, never updated, and the backend never writes to it at all. Time series
-collections restrict updates and deletes precisely because that is the contract, and a
-design that needs to rewrite the past routinely is arguing with the storage engine.
+**The route** (`provedores`) is state. A PSP is onboarded, its SLA changes, it goes
+into an incident. Normal collection, unique indexes, upserts.
 
-**The asset** (`meters`, `transformers`, `feeders`) is state. It changes: a meter is
-flagged, a customer changes tariff, a transformer is replaced. It is a normal
-collection with unique indexes, upserts and everything a registry needs.
+**The opinion** (`incidents`, `incident_alerts`) is what a human concluded from a
+window of events. Separate because it has a different lifecycle and because the change
+stream driving the live screen has to watch something that fires once per incident, not
+once per transaction.
 
-**The opinion** (`investigations`, `loss_alerts`) is what a human concluded from the
-other two. Separate because it has a different lifecycle, a different retention and a
-different audience — and because the change stream that drives the live screen has to
-watch something that fires once per case, not once per measurement.
-
-## What goes in `meta`, and what does not
+## The document
 
 ```js
-meta: { meter_id, transformer_id, feeder_id, phase, kind }
+{
+  ts: ISODate("2026-09-01T14:03:27.412Z"),
+  meta: { canal: "pix", provedor: "PSP-014",
+          produto: "pix_chave", uf: "SP" },
+  valor: 148.90,
+  latencia_ms: 96.4,
+  aprovado: true,
+  erro: null,                  // "AB03" | "05" | ... quando recusado
+  conta_id: "C001284471"
+}
 ```
 
-The rule: `meta` carries **identity**, never state.
+## The cardinality decision
 
-A meta field is part of the bucket's identity. Change it and the server does not
-update history — it starts a new bucket series for the new value, and the same meter
-now has its measurements split across two lineages. Storage grows, and a query
-filtering on the old value silently stops seeing the new data.
+This is the first question any bank asks, so it gets the first answer.
 
-So `tariff`, `customer_class` and `under_investigation` live in `meters` and are joined
-at query time. They are all mutable, and all three were candidates for `meta` on the
-first pass because they read like "attributes of the meter".
+`meta` holds the **route**: channel, provider, product, state. Roughly 2 900
+combinations in this dataset. Each distinct meta value is its own bucket series, so the
+bucket layer stays small and every observability query — p99 per provider, decline rate
+per channel — reads a handful of series.
 
-`transformer_id` is denormalised into `meta` even though it is technically derivable
-from `meters`. The balance query groups by transformer across the whole collection;
-without it in `meta`, that is a lookup per meter. It is also genuinely immutable in
-this model — a meter moving to another transformer is a new install.
+`conta_id` is a **measurement field** with a secondary index `{conta_id: 1, ts: 1}`.
+There are two million accounts here and tens of millions at a real bank. Putting the
+account in `meta` turns "a few thousand series" into "one series per account", and the
+bucket layer stops being a compression mechanism and becomes a per-account file system.
 
-`kind` (`medidor` / `fronteira`) is what lets one collection hold both sides of the
-balance. The boundary meter is not a special table: it is a measurement with a
-different `kind`, which is why the balance is one `$group` and not a join.
+Both models were built and measured on the same sample —
+[`../docs/adr/0002-cardinalidade.md`](../docs/adr/0002-cardinalidade.md) has the table.
+The decision is not a preference; it is the difference between the two rows.
 
-## The measurement is the interval, not the register
+## Interval, not counter
 
-`kwh` is the consumption of that 15-minute interval. A real meter reports a cumulative
-register, and storing that would force every query to difference consecutive
-documents. `$setWindowFields` can do it, but then every question about energy is
-preceded by undoing a modelling choice.
+The event stores the transaction, not a running total. A pre-aggregated counter answers
+only the questions someone anticipated: "declines per provider per minute" is cheap
+until somebody asks "declines per provider **per state** for card-not-present between
+14:00 and 14:20". Storing the event keeps that question one aggregation away instead of
+one sprint away.
 
-The trade-off is honest and worth saying out loud to a customer: interval storage
-loses the ability to detect a register rollback or a tamper that resets the meter. In a
-real deployment you store both — the register for audit, the interval for analytics.
-This PoV stores the interval because that is what the demonstration asks about.
+The trade-off, stated plainly: raw events cost more storage than counters. That is
+exactly what the storage panel measures, and what the bucket format is for.
 
-## Registered versus delivered
+## `erro` as null, not absent
 
-The meter records what it **registered**; the boundary meter records what was
-**delivered**. Non-technical loss is the difference the meter never saw, so it cannot
-be a field on the meter's own document — it only exists as a relationship between two
-series.
-
-That is why the generator holds `register_factor` on `meters` (ground truth, kept out
-of the API's meter projection) and why the demo's claim is always about a transformer,
-never about a single meter until a human opens a case.
-
-## Bucketing
-
-`bucketMaxSpanSeconds: 86400`, decided by measurement in
-[`../docs/adr/0001-bucketing.md`](../docs/adr/0001-bucketing.md) and not by preference.
-Fixed at creation; changing it means recreating the collection.
+A declined transaction carries its reason code; an approved one carries `erro: null`.
+Explicit null costs a couple of bytes per event and keeps `$group` expressions from
+having to distinguish "approved" from "field missing" — a distinction that has produced
+wrong decline rates in more than one monitoring system.
 
 ## Two constraints that shaped the code
 
 **No user-controlled `_id`, so no upsert.** The generator is idempotent everywhere
-except the measurements, where reloading means `--drop`. Do not "fix" that.
+except the events, where reloading means `--drop`.
 
-**A time series collection cannot be renamed.** It is a view over `system.buckets.*`,
-and `renameCollection` fails with `CommandNotSupportedOnView`. Any script that stages
+**A time series collection cannot be renamed.** It is a view over `system.buckets.*`
+and `renameCollection` fails with `CommandNotSupportedOnView`. Any workflow that stages
 data under a temporary name and swaps it at the end has to be written differently here.

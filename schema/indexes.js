@@ -1,37 +1,38 @@
 // Índices do PoV. Idempotente: createIndex é no-op se o índice já existe.
 // Rodar com: mongosh "$MONGODB_URI" schema/indexes.js
-const dbName = process.env.MONGODB_DB || "energia_medicao";
+const dbName = process.env.MONGODB_DB || "trilho_pagamentos";
 const d = db.getSiblingDB(dbName);
 
-// --- série -------------------------------------------------------------------
-// Índice em coleção time series indexa buckets, não medições. Só a forma
-// {meta.x: 1, ts: 1} paga; não existe índice único aqui.
-d.readings.createIndex({ "meta.meter_id": 1, ts: 1 });
-d.readings.createIndex({ "meta.transformer_id": 1, ts: 1 });
+// --- telemetria ---------------------------------------------------------------
+// Índice em coleção time series indexa buckets, não eventos. As duas primeiras
+// formas cobrem a rota; a terceira é a que responde a objeção de cardinalidade.
+d.payment_events.createIndex({ "meta.provedor": 1, ts: 1 });
+d.payment_events.createIndex({ "meta.canal": 1, ts: 1 });
 
-// --- cadastro ----------------------------------------------------------------
-d.meters.createIndex({ meter_id: 1 }, { unique: true });
-d.meters.createIndex({ transformer_id: 1 });
-d.meters.createIndex({ location: "2dsphere" });
-d.meters.createIndex({ under_investigation: 1 }, { sparse: true });
-d.transformers.createIndex({ transformer_id: 1 }, { unique: true });
-d.transformers.createIndex({ feeder_id: 1 });
-d.feeders.createIndex({ feeder_id: 1 }, { unique: true });
-d.loss_scenarios.createIndex({ transformer_id: 1 }, { unique: true });
+// conta_id é CAMPO DE MEDIÇÃO, não metaField. São milhões de contas: no metaField
+// cada uma vira uma série própria. Com índice secundário sobre o campo, o velocity
+// da conta é uma consulta pontual. Ver docs/adr/0002-cardinalidade.md.
+d.payment_events.createIndex({ conta_id: 1, ts: 1 });
 
-// --- casos -------------------------------------------------------------------
-d.investigations.createIndex({ meter_id: 1, status: 1 });
-d.investigations.createIndex({ transformer_id: 1, opened_at: -1 });
-d.investigations.createIndex({ opened_at: -1 });
-d.loss_alerts.createIndex({ created_at: -1 });
+// --- cadastro -----------------------------------------------------------------
+d.provedores.createIndex({ provedor_id: 1 }, { unique: true });
+d.provedores.createIndex({ canal: 1 });
+d.provedores.createIndex({ em_incidente: 1 }, { sparse: true });
+d.degradation_scenarios.createIndex({ provedor_id: 1, kind: 1 }, { unique: true });
+d.demo_accounts.createIndex({ conta_id: 1 }, { unique: true });
+
+// --- incidentes ---------------------------------------------------------------
+d.incidents.createIndex({ provedor_id: 1, status: 1 });
+d.incidents.createIndex({ opened_at: -1 });
+d.incident_alerts.createIndex({ at: -1 });
 
 // Deliberadamente ausentes:
-//  - índice em `kwh`: "toda leitura acima de X" não é pergunta deste workload e o
-//    índice teria o tamanho do dado que indexa.
-//  - {meta.feeder_id, meta.transformer_id, ts}: o rollup do alimentador parte do
-//    agregado por transformador (centenas), não das medições (milhões).
+//  - índice em `valor` ou `latencia_ms`: "todo evento acima de X" não é pergunta
+//    deste workload e o índice teria o tamanho do dado que indexa.
+//  - {meta.uf, ts}: o corte por UF sempre acompanha canal ou provedor, que já
+//    prefixam um índice existente.
 
 print("índices em " + dbName + ":");
-["readings", "meters", "transformers", "investigations"].forEach(function (c) {
+["payment_events", "provedores", "incidents"].forEach(function (c) {
   print("  " + c + ": " + d[c].getIndexes().map(function (i) { return i.name; }).join(", "));
 });
