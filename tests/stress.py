@@ -118,15 +118,22 @@ def main() -> int:
     with open(out, "w") as fh:
         json.dump(resultados, fh, indent=2)
 
-    erros = {c for r in resultados for c in r["status"] if c not in (200, 429)}
+    # 429 (fila cheia) e 503 (maxTimeMS) são recusas desenhadas: sob saturação o
+    # sistema recusa cedo em vez de pendurar. O que não pode aparecer é 500 nem 0
+    # (timeout de socket / conexão morta).
+    erros = {c for r in resultados for c in r["status"] if c not in (200, 429, 503)}
     pico = resultados[-1]
     print(f"\n{out}")
     if erros:
         print(f"FALHA: status inesperados {sorted(erros)}")
         return 1
     p95 = pico["interativo_ms"].get("p95", 0)
-    print(f'sem 5xx e sem timeout até {pico["clientes"]} clientes; '
-          f'p95 interativo no pico: {p95} ms')
+    recusas = sum(v for r in resultados for c, v in r["status"].items() if int(c) in (429, 503))
+    total = sum(v for r in resultados for v in r["status"].values())
+    print(f'sem 500 e sem conexão morta até {pico["clientes"]} clientes; '
+          f'p95 interativo no pico: {p95} ms; '
+          f'{recusas} recusas em {total} chamadas '
+          f'({100*recusas/max(total,1):.1f}% — 429 fila, 503 maxTimeMS)')
     return 0
 
 

@@ -109,6 +109,23 @@ Each of these replaced something that looked right and was not:
   like a concurrency bug.
 - **An O(n²) helper in the cardinality experiment.** Picking the busiest account with a
   `max()` over a `sum()` per candidate never finished on 400 000 events.
+- **A detector that failed on both the positive and the negative case.** The baseline
+  window ended at −1 and was twelve windows long, so a two-hour degradation walked into
+  its own baseline and the z-score collapsed after two windows; meanwhile a very stable
+  provider had a standard deviation so small that ordinary noise produced z above 6. It
+  now looks back 96 windows, stops four short of the one being judged, and requires the
+  deviation to clear both an absolute and a relative floor — the relative one because at
+  23.5% decline and ~500 events per window, binomial noise alone is ±1.9 pp.
+- **A live view that learned its baseline from a series that only lives an hour.** A
+  ten-minute degradation entered the eight-minute baseline and became the reference. The
+  live view now compares against the provider's registered baseline, and the screen says
+  which reference it used.
+- **A channel and a provider that could contradict each other.** The query filtered on
+  both, so picking a PIX PSP while the channel said "cartão" returned zero events — and
+  `$fill` then cheerfully "reconstructed" the entire empty window. The provider now
+  implies the channel, and filling a window with nothing measured in it is refused.
+- **A storage panel that hung for 32 seconds.** `$collStats` over 2.6 M buckets is not
+  free; it is warmed in a thread at startup and cached.
 
 ## State
 

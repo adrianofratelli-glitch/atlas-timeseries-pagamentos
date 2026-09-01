@@ -50,7 +50,10 @@ CENARIOS = [
         "canal": "pix",
         "provedor_idx": 21,
         "label": "PSP para de reportar telemetria por 40 minutos",
-        "dia_offset": -1, "hora": 16, "duracao_h": 0.67,
+        # Última hora do dataset de propósito: a lacuna tem 40 minutos e some em
+        # bins de 15 min. Plantada às 23h, a janela de 1 hora (bins de 1 min) mostra
+        # as 40 janelas reconstruídas uma a uma.
+        "dia_offset": -1, "hora": 23, "duracao_h": 0.67,
         "fator_latencia": 1.0, "fator_recusa": 1.0,
         "deve_abrir": False,
         "apagao": True,

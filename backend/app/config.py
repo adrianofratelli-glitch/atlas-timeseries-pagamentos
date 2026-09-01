@@ -30,6 +30,23 @@ MAX_POINTS = _int("TS_MAX_POINTS", 4000)
 Z_SCORE_THRESHOLD = _float("Z_SCORE_THRESHOLD", 3.0)
 Z_MIN_WINDOWS = _int("Z_MIN_WINDOWS", 3)
 
+# A linha de base olha longe e para antes da janela julgada. Medido: com base de 12
+# janelas terminando em -1, uma degradação de duas horas entra na própria base e o
+# z despenca depois de duas janelas — o cenário plantado deixava de ser detectado.
+Z_BASELINE_WINDOWS = _int("Z_BASELINE_WINDOWS", 96)
+Z_BASELINE_LAG = _int("Z_BASELINE_LAG", 4)
+
+# Piso absoluto: num provedor muito estável o desvio padrão é minúsculo e qualquer
+# ruído vira z alto. O controle negativo (recusa 23,5% estável) marcava janela
+# anômala com z 6,2 sem nada ter acontecido.
+# Piso absoluto E relativo. Só o absoluto não basta: com 23,5% de recusa e ~500
+# eventos por janela, o desvio binomial já é ~1,9pp, então 1,5pp é ruído. O piso
+# relativo escala com a linha de base do próprio provedor.
+MIN_DELTA_PP = _float("MIN_DELTA_PP", 1.5)
+MIN_DELTA_RATIO = _float("MIN_DELTA_RATIO", 0.35)
+MIN_P99_RATIO = _float("MIN_P99_RATIO", 1.5)
+MIN_EVENTS_PER_WINDOW = _int("MIN_EVENTS_PER_WINDOW", 30)
+
 # Janelas do velocity da conta, em horas. Entram numa passada só sobre a maior.
 VELOCITY_WINDOWS = [int(x) for x in
                     os.getenv("VELOCITY_WINDOWS", "1,6,24").split(",") if x.strip()]

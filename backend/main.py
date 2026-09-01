@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import queue
+import threading
 import time
 from datetime import datetime
 
@@ -33,6 +34,10 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
 @app.on_event("startup")
 def _startup() -> None:
     hub.start()
+    # Aquece o $collStats numa thread: a primeira medição leva ~32 s sobre 2,6 M
+    # buckets e não pode acontecer com a plateia olhando.
+    threading.Thread(target=storage.aquecer, name="storage-warmup",
+                     daemon=True).start()
 
 
 @app.on_event("shutdown")
@@ -147,7 +152,7 @@ def provider_health(provedor_id: str, hours: float = Query(24.0, gt=0)):
 
 
 @app.get("/api/ranking")
-def provider_ranking(hours: float = Query(24.0, gt=0),
+def provider_ranking(hours: float = Query(1.0, gt=0),
                      limit: int = Query(40, ge=1, le=100)):
     return _timed(lambda: providers.ranking(hours, limit), "analitico")
 

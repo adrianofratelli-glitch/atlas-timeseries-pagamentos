@@ -43,6 +43,12 @@ inspector rail, in script order.
 `body { overflow: hidden }` and `.app { height: 100dvh }`: the page never scrolls. Only
 the control rail and the inspector body scroll internally.
 
+Below 860 px the shell stacks and the document may scroll vertically. The topbar
+wraps its status badges onto a second row instead of preserving their desktop
+max-content width: that previously widened a 320 px viewport by 498 px and a
+768 px viewport by 50 px. The browser surface smoke fixes the contract at
+320/768/1600 px and also exercises reload and keyboard focus.
+
 ## Charting
 
 `uPlot`, not a React chart library. The series reaches thousands of points and redraws on

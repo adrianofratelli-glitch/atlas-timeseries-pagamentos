@@ -50,9 +50,14 @@ Hover anywhere: the metric row reads back the instant and all three percentiles.
 
 ## 3 · The telemetry gap — 2 min
 
-Still on latency, pick **PSP-021**. There is a 40-minute hole where the provider stopped
-reporting. Toggle reconstruction off: a hole. On: the dashed amber segment, labelled,
-with the count in the metric strip.
+Still on latency, pick **PSP-021** and the **6 h** window. There is a 40-minute hole
+where the provider stopped reporting. The dashed segment marks the eight reconstructed
+windows, and the metric strip counts them.
+
+Use 6 h, not 1 h: the gap sits at the very start of the 1-hour window, and `locf` has no
+previous observation to carry forward there. Saying that out loud is better than
+pretending — it is the honest limit of forward-filling, and a bank's data team will
+respect that you named it.
 
 `$densify` created the missing windows and `$fill` carried the last observation forward,
 inside the pipeline. No application loop, and every invented point says it was invented.
@@ -86,7 +91,11 @@ Say the two things that matter:
 
 ## 6 · Live, with a degradation you cause — 2 min
 
-**Iniciar ingestão ao vivo**, then **Injetar degradação** on the provider on screen.
+**Iniciar ingestão ao vivo**. Let it run for **about a minute** before touching
+anything — the live view compares against the provider's registered baseline, and you
+want a clean stretch on screen first so the audience sees the before.
+
+Then **Injetar degradação** on the provider on screen.
 
 Events start landing, the z-score climbs, the verdict flips to *degradação*, and
 **Abrir incidente** lights up. One transaction flags the provider, writes the incident
@@ -115,4 +124,6 @@ worth more than any number on the screen.
 | 429 on the health view | analytic queue capped at 3 | wait a second and repeat; say it out loud, refusing early is the design |
 | Detection does not match ground truth | wrong or partial data load | stop; do not improvise a number |
 | Empty chart | window outside the loaded data | pick 24 h, the anchor is the last event |
+| Latency view refuses with 422 | a whole channel over more than 24 h | pick a provider; the interface normally does this for you |
+| Ranking tab slow | it scans every provider | it is capped at 6 h with a 1 h default by design |
 | Velocity returns zeros | account outside the 24 h window | use one of the planted chips |

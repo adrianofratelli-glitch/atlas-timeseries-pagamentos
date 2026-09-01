@@ -29,6 +29,10 @@ const MODOS = {
       { key: 'p50', label: 'p50 (ms)', stroke: CORES.p50 },
       { key: 'p95', label: 'p95 (ms)', stroke: CORES.p95 },
       { key: 'p99', label: 'p99 (ms)', stroke: CORES.p99, width: 2.5 },
+      // Invariante 6: ponto reconstruído nunca parece medido. Série própria,
+      // tracejada, sobre o p99 — sem ela o platô do $fill passa por medição.
+      { key: 'p99', label: 'reconstruído', stroke: CORES.reconstruido, width: 3,
+        dash: [4, 4], apenasReconstruido: true },
     ],
   },
   saude: {
@@ -56,7 +60,12 @@ export default function Chart({ mode, points, minHeight = 240, onHover }) {
   const spec = MODOS[mode] ?? MODOS.latencia
   const dados = useMemo(() => {
     const x = points.map((p) => new Date(p.ts).getTime() / 1000)
-    return [x, ...spec.series.map((s) => points.map((p) => p[s.key] ?? null))]
+    return [x, ...spec.series.map((s) => points.map((p, i) => {
+      if (!s.apenasReconstruido) return p[s.key] ?? null
+      // Os vizinhos entram também, senão o trecho tracejado flutua solto no ar.
+      const vizinho = points[i - 1]?.reconstruido || points[i + 1]?.reconstruido
+      return p.reconstruido || vizinho ? (p[s.key] ?? null) : null
+    }))]
   }, [points, spec])
 
   useEffect(() => {

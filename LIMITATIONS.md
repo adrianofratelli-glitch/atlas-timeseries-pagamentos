@@ -84,13 +84,33 @@ question a DBA in the room will ask:
 databases at the same time. Every number in `queries/benchmarks.md` was measured under
 whatever else was resident. That makes them conservative rather than flattering.
 
-**A network floor of ~8 ms** from the presenting host to this cluster. Any query
-reported near that number is measuring the round trip, not the database.
+**A network floor of 17.2 ms** from the presenting host to this cluster, measured in the
+same run as every latency. Any query reported near that number is measuring the round
+trip, not the database. An earlier round of measurements ran over a VPN and reported
+8.5 ms — *lower* — which is why the floor is printed alongside the results rather than
+assumed.
 
 **The live ingestion is a demonstration device.** A single background thread inside the
 API writing a few hundred events per tick from the same synthetic model. It exists so
 the audience can watch events arrive, a provider degrade, an incident open and the data
 expire — not to characterise ingestion capacity.
+
+**Two queries do not fit the ceiling, by design.** A whole channel over 7 days is 27 M
+events and exceeds `maxTimeMS`; `latency.serie()` refuses a channel-wide window above
+24 h with a `422` rather than burning fifteen seconds. The provider ranking scans every
+provider at once — 551 ms at 1 h, 5.1 s at 6 h, above the ceiling at 24 h — so its window
+is capped at 6 h. Both limits are in `queries/benchmarks.md` with the numbers.
+
+**Bucket occupancy is poor and it costs storage.** 17 events per bucket against a
+theoretical ~1 000, because ~2 900 routes receive events continuously and buckets close
+long before they fill. That is why the storage ratio is 2.3× and not the 7× a denser
+workload shows. ADR 0001 measures what changes it and what does not.
+
+**Live detection uses a different reference than the historical view.** The live series
+lives for one hour, so learning a baseline from it does not work — measured, a ten-minute
+degradation entered the eight-minute baseline window and became its own reference. The
+live view compares against the provider's registered `recusa_base`; the historical view
+learns the baseline from the data. The interface says which one it used.
 
 **Concurrency is capped, deliberately.** The analytic path has three simultaneous slots
 and refuses the excess with a `429` after 750 ms. That is a demo protecting the

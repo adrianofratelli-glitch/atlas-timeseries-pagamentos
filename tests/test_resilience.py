@@ -76,11 +76,17 @@ def main() -> int:
     check("contas de demonstração plantadas", len(contas) >= 1, str(len(contas)))
 
     print("\njanela e granularidade")
+    # Escopado por provedor, que é o que a tela faz. Sem provedor, uma janela longa
+    # varre o canal inteiro e é recusada de propósito — testado logo abaixo.
     for hours, unidade in ((1, "minute"), (24, "minute"), (168, "hour")):
-        status, body = call("/api/latency", {"canal": "pix", "hours": hours})
+        status, body = call("/api/latency",
+                            {"provedor": degradado["provedor_id"], "hours": hours})
         check(f"servidor escolhe {unidade} em {hours}h",
               status == 200 and body["granularity"]["unit"] == unidade,
               f'{status} {body.get("granularity")}')
+    status, _ = call("/api/latency", {"canal": "pix", "hours": 168})
+    check("canal inteiro em janela longa é recusado com 422, não 503",
+          status == 422, str(status))
     for hours in (0, -1, 100000):
         status, _ = call("/api/latency", {"canal": "pix", "hours": hours})
         check(f"janela {hours} recusada", status == 422, str(status))
@@ -106,7 +112,9 @@ def main() -> int:
           ctl["totals"]["taxa_recusa"] > deg["totals"]["taxa_recusa"],
           f'{ctl["totals"]["taxa_recusa"]} vs {deg["totals"]["taxa_recusa"]}')
 
-    status, lat = call(f'/api/providers/{latencia["provedor_id"]}/health', {"hours": 24})
+    # A degradação de latência foi plantada há dois dias: 24 h não a alcança, e é
+    # assim de propósito — o cenário existe para exercitar a janela mais larga.
+    status, lat = call(f'/api/providers/{latencia["provedor_id"]}/health', {"hours": 72})
     check("degradação de latência é detectada pelo z de p99",
           lat["pico"]["z_p99_max"] > lat["z_threshold"],
           f'{lat["pico"]["z_p99_max"]} vs {lat["z_threshold"]}')
@@ -247,7 +255,10 @@ def main() -> int:
         trava = threading.Lock()
 
         def carga():
-            s, _ = call(f'/api/providers/{degradado["provedor_id"]}/health', {"hours": 168})
+            # 24 h é a janela do roteiro. Em 7 dias a consulta sozinha leva ~7,5 s e
+            # sob 24 clientes estoura o maxTimeMS — comportamento real, documentado
+            # no LIMITATIONS, e não o que este teste está medindo.
+            s, _ = call(f'/api/providers/{degradado["provedor_id"]}/health', {"hours": 24})
             with trava:
                 respostas.append(s)
 

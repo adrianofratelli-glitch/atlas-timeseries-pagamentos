@@ -13,13 +13,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ..config import (MAX_POINTS, MAX_TIME_MS, Z_MIN_WINDOWS, Z_SCORE_THRESHOLD)
+from ..config import (MAX_POINTS, MAX_TIME_MS, MIN_DELTA_PP, MIN_DELTA_RATIO,
+                      MIN_EVENTS_PER_WINDOW,
+                      MIN_P99_RATIO, Z_BASELINE_LAG, Z_BASELINE_WINDOWS, Z_MIN_WINDOWS,
+                      Z_SCORE_THRESHOLD)
 from .client import db, with_retry
 from .ranges import label, resolve
 
 
 def pipeline(provedor: str, start: datetime | None, end: datetime | None, unit: str,
-             size: int, janela: int) -> list[dict]:
+             size: int, janela: int, lag: int = 1) -> list[dict]:
     match: dict = {"meta.provedor": provedor}
     if start and end:
         match["ts"] = {"$gte": start, "$lt": end}
@@ -42,16 +45,17 @@ def pipeline(provedor: str, start: datetime | None, end: datetime | None, unit: 
         {"$setWindowFields": {
             "sortBy": {"ts": 1},
             "output": {
-                # A janela termina em -1: a linha de base é o passado do provedor,
-                # sem incluir a janela que está sendo julgada. Incluir a própria
-                # janela dilui o desvio justamente quando ele importa.
+                # A base olha para trás `janela` posições e PARA em `-lag`, sem
+                # encostar na janela julgada nem nas imediatamente anteriores. Com
+                # base curta encostando em -1, uma degradação de duas horas entrava
+                # na própria linha de base e o z despencava depois de duas janelas.
                 "recusa_base": {"$avg": "$taxa_recusa",
-                                "window": {"documents": [-janela, -1]}},
+                                "window": {"documents": [-janela, -lag]}},
                 "recusa_desvio": {"$stdDevSamp": "$taxa_recusa",
-                                  "window": {"documents": [-janela, -1]}},
-                "p99_base": {"$avg": "$p99", "window": {"documents": [-janela, -1]}},
+                                  "window": {"documents": [-janela, -lag]}},
+                "p99_base": {"$avg": "$p99", "window": {"documents": [-janela, -lag]}},
                 "p99_desvio": {"$stdDevSamp": "$p99",
-                               "window": {"documents": [-janela, -1]}},
+                               "window": {"documents": [-janela, -lag]}},
             }}},
         {"$set": {
             "z_recusa": {"$cond": [
@@ -62,8 +66,22 @@ def pipeline(provedor: str, start: datetime | None, end: datetime | None, unit: 
                 {"$gt": ["$p99_desvio", 0]},
                 {"$divide": [{"$subtract": ["$p99", "$p99_base"]}, "$p99_desvio"]}, 0]},
         }},
-        {"$set": {"anomalo": {"$or": [{"$gt": ["$z_recusa", Z_SCORE_THRESHOLD]},
-                                      {"$gt": ["$z_p99", Z_SCORE_THRESHOLD]}]}}},
+        # Anomalia exige z alto E um desvio que signifique alguma coisa no mundo: um
+        # provedor estabilíssimo tem desvio padrão minúsculo, e sem o piso absoluto
+        # qualquer ruído vira z de 6. Também exige volume mínimo na janela.
+        {"$set": {
+            "recusa_anomala": {"$and": [
+                {"$gt": ["$z_recusa", Z_SCORE_THRESHOLD]},
+                {"$gt": [{"$subtract": ["$taxa_recusa", "$recusa_base"]},
+                         {"$max": [MIN_DELTA_PP,
+                                   {"$multiply": ["$recusa_base", MIN_DELTA_RATIO]}]}]},
+                {"$gte": ["$eventos", MIN_EVENTS_PER_WINDOW]}]},
+            "p99_anomalo": {"$and": [
+                {"$gt": ["$z_p99", Z_SCORE_THRESHOLD]},
+                {"$gt": ["$p99", {"$multiply": ["$p99_base", MIN_P99_RATIO]}]},
+                {"$gte": ["$eventos", MIN_EVENTS_PER_WINDOW]}]},
+        }},
+        {"$set": {"anomalo": {"$or": ["$recusa_anomala", "$p99_anomalo"]}}},
         {"$sort": {"ts": 1}},
         {"$project": {"_id": 0, "ts": 1, "eventos": 1, "recusados": 1,
                       "volume": {"$round": ["$volume", 2]},
@@ -73,15 +91,15 @@ def pipeline(provedor: str, start: datetime | None, end: datetime | None, unit: 
                       "p99_base": {"$round": ["$p99_base", 1]},
                       "z_recusa": {"$round": ["$z_recusa", 2]},
                       "z_p99": {"$round": ["$z_p99", 2]},
-                      "anomalo": 1}},
+                      "anomalo": 1, "recusa_anomala": 1, "p99_anomalo": 1}},
         {"$limit": MAX_POINTS},
     ]
 
 
 def saude(provedor: str, hours: float) -> dict:
     start, end, unit, size = resolve(hours)
-    janela = Z_MIN_WINDOWS * 4
-    pipe = pipeline(provedor, start, end, unit, size, janela)
+    janela = Z_BASELINE_WINDOWS
+    pipe = pipeline(provedor, start, end, unit, size, janela, Z_BASELINE_LAG)
     linhas = with_retry(lambda: list(
         db().payment_events.aggregate(pipe, maxTimeMS=MAX_TIME_MS)))
 
@@ -113,6 +131,10 @@ def saude(provedor: str, hours: float) -> dict:
                    "volume": round(sum(x["volume"] for x in linhas), 2)},
         "z_threshold": Z_SCORE_THRESHOLD,
         "min_windows": Z_MIN_WINDOWS,
+        "min_delta_pp": MIN_DELTA_PP,
+        "min_delta_ratio": MIN_DELTA_RATIO,
+        "baseline_windows": janela,
+        "baseline_lag": Z_BASELINE_LAG,
         "longest_streak": melhor,
         "degradado": melhor >= Z_MIN_WINDOWS,
         "pico": {"inicio": inicio_pico, "fim": fim_pico,
@@ -123,13 +145,54 @@ def saude(provedor: str, hours: float) -> dict:
 
 
 def saude_ao_vivo(provedor: str) -> dict:
-    """Mesma matemática sobre `payment_events_live`.
+    """Saúde sobre `payment_events_live`, comparada à linha de base **cadastrada**.
 
-    Bins de 5 s e sem faixa: a TTL de uma hora já delimita o que existe lá, e
-    agrupar por minuto devolveria um ponto só nos primeiros minutos.
+    A série ao vivo nasce e morre dentro de uma hora. Aprender a linha de base dela
+    mesma não funciona: medido, uma degradação de dez minutos entra na janela de
+    base de oito minutos e vira a própria referência — a recusa marcava 47% com
+    z 0,0. Aqui a referência é `provedores.recusa_base`, que é o que a operação
+    sabe sobre aquele provedor antes de a demo começar.
+
+    Na visão histórica a base continua sendo aprendida do dado: lá existem dias de
+    passado e a degradação é um episódio dentro deles.
     """
-    janela = Z_MIN_WINDOWS * 4
-    pipe = pipeline(provedor, None, None, "second", 5, janela)
+    d = db()
+    cadastro = d.provedores.find_one({"provedor_id": provedor}) or {}
+    base_pct = float(cadastro.get("recusa_base", 0.0)) * 100
+    limite_pct = max(base_pct * (1 + MIN_DELTA_RATIO), base_pct + MIN_DELTA_PP)
+
+    pipe = [
+        {"$match": {"meta.provedor": provedor}},
+        {"$group": {"_id": {"$dateTrunc": {"date": "$ts", "unit": "second", "binSize": 5}},
+                    "eventos": {"$sum": 1},
+                    "recusados": {"$sum": {"$cond": ["$aprovado", 0, 1]}},
+                    "volume": {"$sum": "$valor"},
+                    "lat": {"$percentile": {"input": "$latencia_ms", "p": [0.5, 0.99],
+                                            "method": "approximate"}}}},
+        {"$set": {"ts": "$_id",
+                  "p50": {"$arrayElemAt": ["$lat", 0]},
+                  "p99": {"$arrayElemAt": ["$lat", 1]},
+                  "recusa_base": base_pct,
+                  "taxa_recusa": {"$cond": [{"$gt": ["$eventos", 0]},
+                                            {"$multiply": [100, {"$divide": [
+                                                "$recusados", "$eventos"]}]}, 0]}}},
+        {"$set": {"z_recusa": {"$cond": [
+            {"$gt": [base_pct, 0]},
+            {"$divide": [{"$subtract": ["$taxa_recusa", base_pct]}, base_pct]}, 0]},
+            "z_p99": 0}},
+        {"$set": {"anomalo": {"$and": [
+            {"$gt": ["$taxa_recusa", limite_pct]},
+            {"$gte": ["$eventos", MIN_EVENTS_PER_WINDOW]}]}}},
+        {"$sort": {"ts": 1}},
+        {"$project": {"_id": 0, "ts": 1, "eventos": 1, "recusados": 1,
+                      "volume": {"$round": ["$volume", 2]},
+                      "p50": {"$round": ["$p50", 1]}, "p99": {"$round": ["$p99", 1]},
+                      "taxa_recusa": {"$round": ["$taxa_recusa", 3]},
+                      "recusa_base": {"$round": ["$recusa_base", 3]},
+                      "z_recusa": {"$round": ["$z_recusa", 2]}, "z_p99": 1,
+                      "anomalo": 1}},
+        {"$limit": MAX_POINTS},
+    ]
     linhas = with_retry(lambda: list(
         db().payment_events_live.aggregate(pipe, maxTimeMS=MAX_TIME_MS)))
     streak = melhor = 0
@@ -148,17 +211,22 @@ def saude_ao_vivo(provedor: str) -> dict:
         "totals": {"eventos": eventos, "recusados": recusados,
                    "taxa_recusa": round(100 * recusados / eventos, 3) if eventos else 0.0,
                    "volume": round(sum(x["volume"] for x in linhas), 2)},
+        "baseline_source": "cadastro do provedor",
+        "recusa_base_pct": round(base_pct, 3),
+        "limite_pct": round(limite_pct, 3),
         "z_threshold": Z_SCORE_THRESHOLD, "min_windows": Z_MIN_WINDOWS,
+        "min_delta_pp": MIN_DELTA_PP, "min_delta_ratio": MIN_DELTA_RATIO,
         "longest_streak": melhor, "degradado": melhor >= Z_MIN_WINDOWS,
         "pico": {"inicio": None, "fim": None,
                  "z_recusa_max": max((x["z_recusa"] for x in anomalas), default=0.0),
-                 "z_p99_max": max((x["z_p99"] for x in anomalas), default=0.0)},
+                 "z_p99_max": 0.0},
         "pipeline": pipe,
     }
 
 
 def ranking(hours: float, limite: int = 40) -> dict:
     """Placar dos provedores na janela: volume, recusa e p99 lado a lado."""
+    hours = min(hours, RANKING_MAX_HOURS)
     start, end, _, _ = resolve(hours)
     pipe = [
         {"$match": {"ts": {"$gte": start, "$lt": end}}},
@@ -188,4 +256,5 @@ def ranking(hours: float, limite: int = 40) -> dict:
         for campo in ("p50", "p99", "taxa_recusa", "volume"):
             if linha.get(campo) is not None:
                 linha[campo] = round(linha[campo], 2)
-    return {"from": start, "to": end, "providers": linhas, "pipeline": pipe}
+    return {"from": start, "to": end, "hours": hours,
+            "max_hours": RANKING_MAX_HOURS, "providers": linhas, "pipeline": pipe}

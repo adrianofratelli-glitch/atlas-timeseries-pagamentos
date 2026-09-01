@@ -30,7 +30,7 @@ export const api = {
   latency: (canal, provedor, hours, fill) =>
     get('/api/latency', { canal, provedor, hours, fill }),
   providerHealth: (id, hours) => get(`/api/providers/${id}/health`, { hours }),
-  ranking: (hours) => get('/api/ranking', { hours }),
+  ranking: (hours = 1) => get('/api/ranking', { hours }),
   velocity: (contaId) => get(`/api/velocity/${contaId}`),
   storage: () => get('/api/storage'),
   incidents: () => get('/api/incidents'),

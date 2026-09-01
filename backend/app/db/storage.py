@@ -16,7 +16,7 @@ from .client import db, with_retry
 # instante da medição no payload para a tela poder dizer quando foi medido.
 _CACHE: dict | None = None
 _CACHE_AT = 0.0
-CACHE_SECONDS = 60.0
+CACHE_SECONDS = 600.0
 
 COLECOES = ("payment_events", "payment_events_flat")
 
@@ -43,6 +43,19 @@ def _stats(nome: str) -> dict | None:
         "timeseries": bool(st.get("timeseries")),
         "buckets": (st.get("timeseries") or {}).get("bucketCount"),
     }
+
+
+def aquecer() -> None:
+    """Roda uma vez no startup, numa thread.
+
+    Medido: `$collStats` com storageStats sobre 2,6 milhões de buckets leva ~32 s
+    na primeira chamada. Sem aquecer, a primeira vez que o apresentador abre a aba
+    de armazenamento a tela fica meio minuto em "medindo…".
+    """
+    try:
+        comparison(force=True)
+    except Exception:  # noqa: BLE001 — aquecimento não pode derrubar o startup
+        pass
 
 
 def comparison(force: bool = False) -> dict:

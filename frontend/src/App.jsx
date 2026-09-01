@@ -70,7 +70,10 @@ export default function App() {
       .then(([h, s, i, l]) => {
         if (!vivo) return
         setHealth(h); setCenarios(s); setIncidentes(i.incidents); setLive(l)
-        const degradado = s.scenarios?.find((x) => x.deve_abrir_incidente)
+        // Abre no cenário de recusa: é o passo 4 do roteiro e cabe na janela de
+        // 24 h. O de latência foi plantado há dois dias de propósito e precisa de 72 h.
+        const degradado = s.scenarios?.find((x) => x.kind === 'recusa')
+          ?? s.scenarios?.find((x) => x.deve_abrir_incidente)
         if (degradado) { setCanal(degradado.canal); setProvedorId(degradado.provedor_id) }
         const c = s.demo_accounts?.[0]?.conta_id
         if (c) setConta(c)
@@ -130,9 +133,11 @@ export default function App() {
       api.storage().then(setStorage).catch((e) => setErro(e.message))
     }
     if (aba === 'ranking' && !ranking) {
-      api.ranking(hours).then(setRanking).catch((e) => setErro(e.message))
+      // Janela fixa de 1 h: o placar varre todos os provedores e em 24 h não cabe
+      // no teto de 15 s. "Quem está ruim agora" é a pergunta dele.
+      api.ranking(1).then(setRanking).catch((e) => setErro(e.message))
     }
-  }, [aba, storage, ranking, hours])
+  }, [aba, storage, ranking])
 
   useEffect(() => {
     if (!aviso) return undefined
@@ -254,7 +259,13 @@ export default function App() {
 
           <label className="campo">
             <span>Provedor</span>
-            <select value={provedorId ?? ''} onChange={(e) => setProvedorId(e.target.value)}>
+            <select value={provedorId ?? ''} onChange={(e) => {
+              // O canal acompanha o provedor: escolher um PSP de PIX com o canal em
+              // Cartão produzia um par contraditório e uma tela vazia.
+              const p = provedores.find((x) => x.provedor_id === e.target.value)
+              if (p && p.canal !== canal) setCanal(p.canal)
+              setProvedorId(e.target.value)
+            }}>
               {provedores.map((p) => (
                 <option key={p.provedor_id} value={p.provedor_id}>
                   {p.provedor_id} · recusa base {n(p.recusa_base * 100)}%
@@ -384,16 +395,25 @@ export default function App() {
 
           {modo === 'saude' && saude && (
             <p className={`veredito ${saude.degradado ? 'risco' : 'ok'}`}>
+              {/* Ao vivo a referência é a base cadastrada do provedor; no histórico
+                  ela é aprendida da própria série. Dizer "3 desvios" nos dois casos
+                  seria descrever um critério que não é o que rodou. */}
               {saude.degradado
-                ? `recusa acima de ${n(saude.z_threshold, 1)} desvios da própria linha de base por ${saude.longest_streak} janelas seguidas — degradação`
-                : `dentro da linha de base do provedor; maior sequência anômala: ${saude.longest_streak} janela(s), limiar ${saude.min_windows} — nada a abrir`}
+                ? (saude.live
+                    ? `recusa acima de ${n(saude.limite_pct)}% (base cadastrada ${n(saude.recusa_base_pct)}%) por ${saude.longest_streak} janelas seguidas — degradação`
+                    : `recusa acima de ${n(saude.z_threshold, 1)} desvios da própria linha de base por ${saude.longest_streak} janelas seguidas — degradação`)
+                : (saude.live
+                    ? `dentro da base cadastrada do provedor (${n(saude.recusa_base_pct)}%, limite ${n(saude.limite_pct)}%) — nada a abrir`
+                    : `dentro da linha de base do provedor; maior sequência anômala: ${saude.longest_streak} janela(s), limiar ${saude.min_windows} — nada a abrir`)}
             </p>
           )}
 
           {pontos.length > 0
             ? <Chart mode={modo === 'saude' ? 'saude' : 'latencia'} points={pontos} onHover={setHover} />
             : <div className="vazio">
-                {carregando || ocupado ? 'consultando o cluster…' : 'sem eventos nesta janela — escolha outro intervalo'}
+                {carregando || ocupado
+                  ? 'consultando o cluster…'
+                  : 'sem eventos medidos nesta janela — escolha outro intervalo ou provedor'}
               </div>}
 
           <QueryDetails pipeline={atual?.pipeline}
@@ -404,8 +424,8 @@ export default function App() {
         <aside className="inspector">
           <div className="abas" role="tablist">
             {[['provedor', 'Provedor'], ['velocity', 'Velocity'],
-              ['armazenamento', 'Armazenamento'], ['ranking', 'Ranking'],
-              ['incidentes', 'Incidentes']].map(([id, rotulo]) => (
+              ['armazenamento', 'Armaz.'], ['ranking', 'Ranking'],
+              ['incidentes', 'Incid.']].map(([id, rotulo]) => (
               <button key={id} role="tab" aria-selected={aba === id}
                       className={aba === id ? 'ativo' : ''} onClick={() => setAba(id)}>{rotulo}</button>
             ))}
@@ -506,6 +526,9 @@ export default function App() {
                   </tbody>
                 </table>
               ) : <p className="vazio">medindo…</p>
+            )}
+            {aba === 'ranking' && ranking && (
+              <small>última {ranking.hours}h · todos os provedores</small>
             )}
 
             {aba === 'incidentes' && (

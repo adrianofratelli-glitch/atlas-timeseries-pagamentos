@@ -32,8 +32,14 @@ def percentis(amostras: list[float]) -> dict:
 
 
 def medir(fn, runs: int) -> dict:
-    for _ in range(3):
-        fn()
+    from pymongo.errors import ExecutionTimeout  # noqa: PLC0415
+    try:
+        for _ in range(3):
+            fn()
+    except ExecutionTimeout:
+        # Consulta que não cabe no teto é um resultado, não um crash: o teto existe
+        # para a tela não travar, e o número que interessa é "não completa".
+        return {"timeout": True, "max_time_ms": int(os.getenv("TS_MAX_TIME_MS", "15000"))}
     amostras = []
     for _ in range(runs):
         t0 = time.perf_counter()
@@ -75,10 +81,15 @@ def main() -> None:
         "latencia_pix_24h": lambda: latency.serie("pix", None, 24, False),
         "latencia_provedor_24h": lambda: latency.serie(None, provedor, 24, False),
         "latencia_provedor_24h_preenchida": lambda: latency.serie(None, provedor, 24, True),
-        "latencia_pix_7d": lambda: latency.serie("pix", None, 168, False),
+        # Canal inteiro em 7 dias são ~27 M eventos: fica aqui de propósito, porque
+        # o resultado ("não completa em 15 s") é um limite que o cliente precisa
+        # ouvir. A interface nunca faz essa consulta — ela sempre escopa por provedor.
+        "latencia_canal_7d_sem_provedor": lambda: latency.serie("pix", None, 168, False),
+        "latencia_provedor_7d": lambda: latency.serie(None, provedor, 168, False),
         "saude_provedor_24h": lambda: providers.saude(provedor, 24),
         "saude_provedor_7d": lambda: providers.saude(provedor, 168),
-        "ranking_24h": lambda: providers.ranking(24),
+        "ranking_1h": lambda: providers.ranking(1),
+        "ranking_6h": lambda: providers.ranking(6),
         "velocity_conta": lambda: velocity.features(conta["conta_id"] if conta
                                                     else "C000000001"),
     }
@@ -106,7 +117,10 @@ def main() -> None:
     print(f'{"consulta":34} {"p50":>9} {"p95":>9} {"acima do piso":>15}')
     print("-" * 71)
     for nome, v in resultados["cases"].items():
-        print(f'{nome:34} {v["p50"]:8.1f}ms {v["p95"]:8.1f}ms {v["p50"] - piso:14.1f}ms')
+        if v.get("timeout"):
+            print(f'{nome:34} {"excedeu " + str(v["max_time_ms"]) + " ms":>27}')
+        else:
+            print(f'{nome:34} {v["p50"]:8.1f}ms {v["p95"]:8.1f}ms {v["p50"] - piso:14.1f}ms')
     print(f'\narmazenamento: {resultados["storage"]["bytes_per_event"]} B/evento, '
           f'{resultados["storage"]["storage_bytes"] / 1e6:,.0f} MB + '
           f'{resultados["storage"]["index_bytes"] / 1e6:,.0f} MB de índice, '
