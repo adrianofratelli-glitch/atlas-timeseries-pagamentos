@@ -56,11 +56,19 @@ def abrir(provedor_id: str, canal: str, z_recusa: float, z_p99: float, janelas: 
     def executar():
         with client().start_session() as sessao:
             with sessao.start_transaction():
-                d.provedores.update_one(
+                resultado = d.provedores.update_one(
                     {"provedor_id": provedor_id, "em_incidente": {"$ne": True}},
                     {"$set": {"em_incidente": True, "incident_id": incidente_id,
                               "flagged_at": agora}},
                     session=sessao)
+                # A checagem em memória no início da função é só fast-path: entre ela e
+                # aqui, outra chamada concorrente pode ter vencido a corrida e já
+                # marcado `em_incidente`. O filtro `$ne: True` não casa nesse caso — sem
+                # olhar `modified_count`, o código seguia e inseria um segundo
+                # documento de incidente "aberto" para o mesmo provedor.
+                if resultado.modified_count == 0:
+                    raise DuplicateKeyError(
+                        f"provedor {provedor_id} já está em incidente")
                 # insert_many/insert_one injeta _id no dicionário original; devolver
                 # isso rende ObjectId não serializável e um 500 depois do commit.
                 d.incidents.insert_one(dict(doc), session=sessao)

@@ -15,8 +15,8 @@ from datetime import datetime
 
 from ..config import (MAX_POINTS, MAX_TIME_MS, MIN_DELTA_PP, MIN_DELTA_RATIO,
                       MIN_EVENTS_PER_WINDOW,
-                      MIN_P99_RATIO, Z_BASELINE_LAG, Z_BASELINE_WINDOWS, Z_MIN_WINDOWS,
-                      Z_SCORE_THRESHOLD)
+                      MIN_P99_RATIO, RANKING_MAX_HOURS, Z_BASELINE_LAG,
+                      Z_BASELINE_WINDOWS, Z_MIN_WINDOWS, Z_SCORE_THRESHOLD)
 from .client import db, with_retry
 from .ranges import label, resolve
 
@@ -176,10 +176,14 @@ def saude_ao_vivo(provedor: str) -> dict:
                   "taxa_recusa": {"$cond": [{"$gt": ["$eventos", 0]},
                                             {"$multiply": [100, {"$divide": [
                                                 "$recusados", "$eventos"]}]}, 0]}}},
-        {"$set": {"z_recusa": {"$cond": [
+        # Não é z-score: aqui não há desvio-padrão de janela anterior para dividir (a
+        # série ao vivo é curta demais para aprender a própria base — ver docstring).
+        # É uma razão percentual contra a base cadastrada, por isso o nome não colide
+        # com `z_recusa`/`z_p99` calculados de verdade em `pipeline()` (histórico).
+        {"$set": {"delta_ratio_recusa": {"$cond": [
             {"$gt": [base_pct, 0]},
             {"$divide": [{"$subtract": ["$taxa_recusa", base_pct]}, base_pct]}, 0]},
-            "z_p99": 0}},
+            "p99_score_indisponivel": True}},
         {"$set": {"anomalo": {"$and": [
             {"$gt": ["$taxa_recusa", limite_pct]},
             {"$gte": ["$eventos", MIN_EVENTS_PER_WINDOW]}]}}},
@@ -189,7 +193,8 @@ def saude_ao_vivo(provedor: str) -> dict:
                       "p50": {"$round": ["$p50", 1]}, "p99": {"$round": ["$p99", 1]},
                       "taxa_recusa": {"$round": ["$taxa_recusa", 3]},
                       "recusa_base": {"$round": ["$recusa_base", 3]},
-                      "z_recusa": {"$round": ["$z_recusa", 2]}, "z_p99": 1,
+                      "delta_ratio_recusa": {"$round": ["$delta_ratio_recusa", 3]},
+                      "p99_score_indisponivel": 1,
                       "anomalo": 1}},
         {"$limit": MAX_POINTS},
     ]
@@ -218,8 +223,9 @@ def saude_ao_vivo(provedor: str) -> dict:
         "min_delta_pp": MIN_DELTA_PP, "min_delta_ratio": MIN_DELTA_RATIO,
         "longest_streak": melhor, "degradado": melhor >= Z_MIN_WINDOWS,
         "pico": {"inicio": None, "fim": None,
-                 "z_recusa_max": max((x["z_recusa"] for x in anomalas), default=0.0),
-                 "z_p99_max": 0.0},
+                 "delta_ratio_recusa_max": max(
+                     (x["delta_ratio_recusa"] for x in anomalas), default=0.0),
+                 "p99_score_indisponivel": True},
         "pipeline": pipe,
     }
 

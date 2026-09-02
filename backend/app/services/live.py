@@ -27,7 +27,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from ..config import LIVE_MINUTES_PER_TICK, LIVE_TICK_SECONDS, LIVE_TTL_SECONDS
-from ..db.client import db
+from ..db.client import db, with_retry
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
@@ -213,16 +213,21 @@ class LiveFeed:
                                 "erro": None if ok else ERROS[canal][ei],
                                 "conta_id": f"C{conta:09d}",
                             })
-                    col.insert_many(docs, ordered=False)
+                    # Falha transitória de rede não pode matar a thread do feed: usa o
+                    # mesmo helper de retry do resto do backend (AutoReconnect/
+                    # NetworkTimeout/ConnectionFailure). Se esgotar as tentativas, a
+                    # exceção sobe e cai no `except` abaixo, que marca o estado como
+                    # erro em vez de "parado" silencioso.
+                    with_retry(lambda docs=docs: col.insert_many(docs, ordered=False))
                     self.written += len(docs)
 
                 self.ticks += 1
                 self.simulated_now = dia + timedelta(minutes=LIVE_MINUTES_PER_TICK)
                 self._stop.wait(LIVE_TICK_SECONDS)
+            self.state = "parado"
         except Exception as exc:  # noqa: BLE001 — o alimentador não derruba a API
             self.last_error = f"{type(exc).__name__}: {exc}"
-        finally:
-            self.state = "parado"
+            self.state = "erro"
 
 
 feed = LiveFeed()

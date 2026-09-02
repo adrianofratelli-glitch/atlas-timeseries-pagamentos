@@ -169,8 +169,11 @@ export default function App() {
       await api.openIncident({
         provedor_id: provedorId,
         canal: provedor?.canal ?? canal,
-        z_recusa: saude.pico?.z_recusa_max ?? 0,
-        z_p99: saude.pico?.z_p99_max ?? 0,
+        // API de incidentes mantém o campo `z_recusa` (contrato de evidência); em modo
+        // ao vivo o valor enviado é a razão percentual (`delta_ratio_recusa_max`), não
+        // um z-score real — não há linha de base aprendida na janela ao vivo.
+        z_recusa: aoVivo ? (saude.pico?.delta_ratio_recusa_max ?? 0) : (saude.pico?.z_recusa_max ?? 0),
+        z_p99: aoVivo ? 0 : (saude.pico?.z_p99_max ?? 0),
         janelas: saude.longest_streak,
         taxa_recusa: saude.totals.taxa_recusa,
         p99_ms: saude.points.at(-1)?.p99 ?? 0,
@@ -359,9 +362,14 @@ export default function App() {
                 <Metrica rotulo="eventos" valor={inteiro(saude?.totals?.eventos)} />
                 <Metrica rotulo="recusa" valor={`${n(saude?.totals?.taxa_recusa)}%`}
                          destaque={saude?.degradado ? 'risco' : 'ok'} />
-                <Metrica rotulo="z recusa (pico)" valor={n(saude?.pico?.z_recusa_max)}
+                <Metrica rotulo={aoVivo ? 'variação recusa (pico)' : 'z recusa (pico)'}
+                         valor={n(aoVivo ? saude?.pico?.delta_ratio_recusa_max : saude?.pico?.z_recusa_max)}
                          destaque={saude?.degradado ? 'risco' : undefined} />
-                <Metrica rotulo="z p99 (pico)" valor={n(saude?.pico?.z_p99_max)} />
+                {aoVivo ? (
+                  <Metrica rotulo="z p99 (pico)" valor="indisponível ao vivo" />
+                ) : (
+                  <Metrica rotulo="z p99 (pico)" valor={n(saude?.pico?.z_p99_max)} />
+                )}
                 <Metrica rotulo="janelas seguidas" valor={saude?.longest_streak ?? '—'} />
                 <Metrica rotulo="resposta" valor={`${n(saude?.elapsed_ms, 0)} ms`} />
               </>
@@ -384,7 +392,8 @@ export default function App() {
                     second: atual?.granularity?.unit === 'second' ? '2-digit' : undefined,
                   })}</strong>
                   {modo === 'saude'
-                    ? ` · recusa ${n(hover.taxa_recusa)}% · base ${n(hover.recusa_base)}% · z ${n(hover.z_recusa)}`
+                    ? ` · recusa ${n(hover.taxa_recusa)}% · base ${n(hover.recusa_base)}% · ${
+                        aoVivo ? `Δ ${n(hover.delta_ratio_recusa)}` : `z ${n(hover.z_recusa)}`}`
                     : ` · p50 ${n(hover.p50, 0)} · p95 ${n(hover.p95, 0)} · p99 ${n(hover.p99, 0)} ms${hover.reconstruido ? ' · reconstruído' : ''}`}
                 </span>
               ) : (

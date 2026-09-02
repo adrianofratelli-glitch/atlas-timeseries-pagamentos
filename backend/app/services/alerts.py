@@ -83,9 +83,14 @@ class AlertHub:
                     for change in stream:
                         if self._stop.is_set():
                             break
+                        now = time.time()
+                        # `_seen` só serve para coalescer dentro de uma janela curta;
+                        # sem poda ele cresce sem limite pela vida do processo.
+                        poda = COALESCE_SECONDS * 10
+                        self._seen = {k: v for k, v in self._seen.items()
+                                     if now - v <= poda}
                         doc = change.get("fullDocument") or {}
                         incident_id = doc.get("incident_id")
-                        now = time.time()
                         if incident_id and now - self._seen.get(incident_id, 0) < COALESCE_SECONDS:
                             continue
                         if incident_id:

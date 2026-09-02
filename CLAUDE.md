@@ -122,3 +122,20 @@ POV_DEV=1 ./start.sh          # HMR + uvicorn --reload
 - Interface em pt-BR, documentação do repositório em inglês, comentários de código em
   português.
 - Antes de mexer no frontend, ler `POV_UI_DESIGN_SYSTEM.md` na raiz do workspace.
+
+## Correções de auditoria (2026-09)
+
+- `RANKING_MAX_HOURS` era usada em `providers.ranking()` sem estar definida em
+  `config.py` — `NameError` em `/api/ranking`. Constante adicionada.
+- Modo ao vivo não calcula z-score de verdade (série curta demais para aprender a
+  própria base). O campo agora se chama `delta_ratio_recusa`/`delta_ratio_recusa_max`
+  (era `z_recusa`/`z_recusa_max`, nome enganoso); `z_p99` ao vivo virou
+  `p99_score_indisponivel`. Frontend e payload de abertura de incidente ajustados.
+- `incidents.abrir()` tinha race condition: a checagem `em_incidente` era só fast-path,
+  e sem olhar `modified_count` do `update_one` dentro da transação, uma corrida
+  concorrente podia gerar dois incidentes "abertos" para o mesmo provedor.
+- Ingestão ao vivo (`live.py`) agora escreve com `with_retry()` em vez de
+  `insert_many` direto, para sobreviver a falha transitória de rede; estado da thread
+  passou a distinguir `parado` de `erro`.
+- `AlertHub._seen` (change stream de incidentes) agora poda entradas antigas — antes
+  crescia sem limite pela vida do processo.

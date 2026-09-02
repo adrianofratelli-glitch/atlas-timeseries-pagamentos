@@ -24,6 +24,10 @@ MAX_TIME_MS = _int("TS_MAX_TIME_MS", 15000)
 MAX_RANGE_DAYS = _int("TS_MAX_RANGE_DAYS", 90)
 MAX_POINTS = _int("TS_MAX_POINTS", 4000)
 
+# Teto de janela para o placar de provedores: varrer todos os provedores em 24 h não
+# cabe no orçamento de `MAX_TIME_MS`. Ver providers.ranking().
+RANKING_MAX_HOURS = _float("RANKING_MAX_HOURS", 6.0)
+
 # Detecção por desvio da própria linha de base, não por limiar absoluto: um
 # adquirente de crédito recusa 23% e está saudável; um PSP de PIX que recusa 3% está
 # em incidente. Ver o controle negativo plantado em degradation_scenarios.
