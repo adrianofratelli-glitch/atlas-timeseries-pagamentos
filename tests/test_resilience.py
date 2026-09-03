@@ -191,11 +191,16 @@ def main() -> int:
     if not args.quick:
         print("\ningestão ao vivo")
         call("/api/live/clear", method="POST")
-        status, live = call("/api/live/start", method="POST",
-                            payload={"canal": "cartao", "eps": 60})
+        status, live = call("/api/live/start", method="POST", payload={"eps": 300})
         check("ingestão inicia", status == 200 and live["state"] == "rodando", str(live))
-        status, _ = call("/api/live/start", method="POST", payload={"canal": "bitcoin"})
-        check("canal inválido recusado com 422", status == 422, str(status))
+        check("ingestão cobre um único trilho com os três canais",
+              live.get("scope") == "trilho_completo"
+              and set(live.get("channels", [])) == {"pix", "cartao", "ted"}, str(live))
+        status, compat = call("/api/live/start", method="POST", payload={"canal": "cartao"})
+        check("canal legado não altera o escopo da ingestão",
+              status == 200 and compat.get("scope") == "trilho_completo"
+              and set(compat.get("channels", [])) == {"pix", "cartao", "ted"},
+              f"{status} {compat}")
         status, deg_live = call("/api/live/degrade", method="POST",
                                 payload={"provedor_id": degradado["provedor_id"]})
         check("degradação injetada", deg_live["degradado"] == degradado["provedor_id"],
@@ -203,11 +208,39 @@ def main() -> int:
         time.sleep(10)
         status, st_live = call("/api/live/status")
         check("ingestão grava eventos", st_live["written"] > 0, str(st_live["written"]))
+        check("contadores por canal fecham com o lote único",
+              sum(st_live["written_by_channel"].values()) == st_live["written"]
+              and all(st_live["written_by_channel"][c] > 0 for c in ("pix", "cartao", "ted")),
+              str(st_live["written_by_channel"]))
         check("ingestão sem erro", st_live["last_error"] is None, str(st_live["last_error"]))
+        status, overview = call("/api/live/overview")
+        check("overview agrega o trilho inteiro em um segundo",
+              status == 200 and overview.get("granularity", {}).get("bin_size") == 1
+              and len(overview.get("points", [])) > 0,
+              f"{status} {overview.get('granularity')} {len(overview.get('points', []))}")
+        check("configuração time series é lida da coleção real",
+              overview.get("collection", {}).get("timeseries") is True
+              and overview["collection"].get("time_field") == "ts"
+              and overview["collection"].get("meta_field") == "meta"
+              and overview["collection"].get("expire_after_seconds", 0) > 0,
+              str(overview.get("collection")))
+        check("amostra do lote confirmado é serializável",
+              overview.get("feed", {}).get("last_document", {}).get("ts") is not None,
+              str(overview.get("feed", {}).get("last_document")))
+        bucket = overview.get("bucket") or {}
+        documento = overview.get("feed", {}).get("last_document", {})
+        check("bucket físico pertence ao documento exibido",
+              bucket.get("meta") == documento.get("meta")
+              and bucket.get("measurements", 0) > 0
+              and bucket.get("compressed") is True,
+              f"bucket={bucket} documento={documento}")
         status, saude_live = call(f'/api/live/health/{degradado["provedor_id"]}')
         check("saúde ao vivo lê payment_events_live",
               saude_live.get("collection") == "payment_events_live"
-              and len(saude_live["points"]) > 0,
+              and len(saude_live["points"]) > 0
+              and saude_live.get("granularity", {}).get("bin_size") == 1
+              and "current_streak" in saude_live
+              and saude_live.get("feed", {}).get("written", 0) >= st_live["written"],
               f'{saude_live.get("collection")} {len(saude_live.get("points", []))}')
 
         from pymongo import MongoClient  # noqa: PLC0415 — só o teste precisa do driver

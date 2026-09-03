@@ -1,129 +1,60 @@
-# Demo script — 15 minutes
+# Demo script — 3 minutes
 
-Written for a bank. Every step names something the audience owns.
+## Before the customer joins
 
-## Pre-demo checklist
+Start the PoV through the portfolio portal and open `http://127.0.0.1:5400`.
+The screen must say **Atlas conectado**. Leave the ingestion stopped; Play creates a new
+visual session without deleting the events already retained by TTL.
 
-Ten minutes before, not while the customer watches.
+## Opening — 20 seconds
 
-```bash
-curl -s 127.0.0.1:8400/health | jq
-```
+> "I will not show you a dashboard. I will show you MongoDB receiving a time series and
+> aggregating it while the data arrives."
 
-- `status: ok`, `events` in the tens of millions, `flat_sample: true`
-- `change_stream: ativo` — if it says `reconectando`, the live alert will not fire
-- `POST /api/demo/reset` — the script opens an incident, and it must not already exist
-- Open the interface: **ADQ-003**, 24 h. The verdict must read *degradação*
-- Switch to **ADQ-006**: it must read *nada a abrir*, with a higher decline rate
+Point out that there is one action and one target collection:
+`trilho_pagamentos.payment_events_live`.
 
-If the detection does not match the ground truth panel, stop. The whole argument rests
-on that number being verifiable.
+## Play — 90 seconds
 
-## The line to open with
+Press **Iniciar ingestão** once.
 
-> "You have a channel, a provider, an account and an incident. Today those live in four
-> systems and a feature store. We are going to answer the questions that matter using
-> one, and I'm going to show you the numbers rather than a slide."
+Read the screen from left to right:
 
-## 1 · Storage — 2 min
+1. The generator creates the synthetic payment events.
+2. The number over the rail is the latest `insert_many` batch confirmed by Atlas.
+3. The destination is a native time series collection, not a normal collection with a
+   timestamp convention.
+4. The four numbers come from the running process: events in this execution, observed
+   throughput, write confirmation time and aggregation time.
 
-Inspector, **Armazenamento** tab. The same events written twice — a time series
-collection and a plain one — with bytes per event side by side and the ratio computed
-live.
+Let the graph grow for at least 20 seconds. Do not click anything else. The fixed
+60-second window is deliberate: the audience sees the series being formed instead of a
+finished chart stretching to fill its container.
 
-Say what it is *not*: MongoDB against MongoDB, a fact about the bucket format, not a
-claim about InfluxDB. Point at the index column — that is where most of the difference
-is, and it is the number the DBA cares about.
+Point to **Documento confirmado**. It changes only after a successful write. The motion
+is a representation of confirmed batches; it is not an independent frontend animation
+pretending that a write happened.
 
-Cheapest credibility in the room. That is why it opens.
+## Technical proof — 40 seconds
 
-## 2 · Latency by percentile — 2 min
+Point to the collection properties read from Atlas: `timeField: ts`, `metaField: meta`
+and the one-hour TTL. Open **Ver query / chamada executada** only if the audience asks
+how the curve was produced. It contains the pipeline actually run by the API.
 
-**Latência**, PIX, 24 h. Three lines: p50, p95, p99.
+## Close — 30 seconds
 
-The sentence: this is `$percentile` over raw events, computed in the database. No
-pre-aggregated counter, no second metrics store. Change the window and name what
-happened — the server moved the `$dateTrunc` bin; the client asked for a window, not a
-granularity.
+> "The same MongoDB collection is accepting events and serving a one-second aggregation
+> now. This proves the mechanism. Your peak, retention and cardinality determine the
+> production sizing; this screen does not pretend to be that benchmark."
 
-Hover anywhere: the metric row reads back the instant and all three percentiles.
-
-## 3 · The telemetry gap — 2 min
-
-Still on latency, pick **PSP-021** and the **6 h** window. There is a 40-minute hole
-where the provider stopped reporting. The dashed segment marks the eight reconstructed
-windows, and the metric strip counts them.
-
-Use 6 h, not 1 h: the gap sits at the very start of the 1-hour window, and `locf` has no
-previous observation to carry forward there. Saying that out loud is better than
-pretending — it is the honest limit of forward-filling, and a bank's data team will
-respect that you named it.
-
-`$densify` created the missing windows and `$fill` carried the last observation forward,
-inside the pipeline. No application loop, and every invented point says it was invented.
-
-## 4 · The degradation, and the one that isn't — 4 min
-
-**Recusa**, **ADQ-003**, 24 h. The decline rate lifts off its own baseline; the z-score
-crosses three deviations and stays there. The ground-truth panel on the left says what
-the seed planted and the screen matches it.
-
-**Now the move that makes the room believe it.** Switch to **ADQ-006**. Its decline rate
-is *higher* than ADQ-003's — and the screen says there is nothing to open. That acquirer
-declines 23% of everything, all day, by product mix. An absolute threshold flags the
-healthy provider and misses the degraded one; comparing each provider against its own
-recent history does not.
-
-That is the slide the customer's risk and data teams are waiting for.
-
-## 5 · Velocity inside the authorisation — 3 min
-
-Inspector, **Velocity** tab. Pick the planted account.
-
-Events, amount and decline rate over 1 h, 6 h and 24 h, with the query time next to it.
-Say the two things that matter:
-
-- This runs **inside** the decision, not on a dashboard. The budget is tens of
-  milliseconds and the number on screen is the measured one.
-- It is the same collection, the same cluster. The account is a measurement field with a
-  secondary index, not a meta field — `docs/adr/0002-cardinalidade.md` has the measured
-  reason, and it is the answer to "won't millions of accounts explode this?".
-
-## 6 · Live, with a degradation you cause — 2 min
-
-**Iniciar ingestão ao vivo**. Let it run for **about a minute** before touching
-anything — the live view compares against the provider's registered baseline, and you
-want a clean stretch on screen first so the audience sees the before.
-
-Then **Injetar degradação** on the provider on screen.
-
-Events start landing, the z-score climbs, the verdict flips to *degradação*, and
-**Abrir incidente** lights up. One transaction flags the provider, writes the incident
-and emits the event; the change stream puts the alert on the strip with nobody
-reloading.
-
-Two sentences: the feed writes to `payment_events_live`, a separate collection, so the
-historical numbers you verified ten minutes ago are still the same numbers. And it has a
-one-hour TTL — nobody cleans up after this demo.
-
-## The close
-
-Count the systems out loud: one cluster, one driver, one query language — for the event,
-the route, the incident and the antifraud feature.
-
-Then say the limit before they ask: at their real peak and their real cardinality this
-is a sizing exercise on a dedicated cluster, and at the extreme a specialised engine has
-a structural advantage. `LIMITATIONS.md` says so in writing, and raising it yourself is
-worth more than any number on the screen.
+Press **Parar ingestão**. The data remains under TTL; stopping a demonstration does not
+delete history.
 
 ## If something goes wrong
 
-| Symptom | What it is | What to do |
-|---|---|---|
-| `change_stream: reconectando` | listener lost the cluster | keep going; steps 1–5 do not need it |
-| 429 on the health view | analytic queue capped at 3 | wait a second and repeat; say it out loud, refusing early is the design |
-| Detection does not match ground truth | wrong or partial data load | stop; do not improvise a number |
-| Empty chart | window outside the loaded data | pick 24 h, the anchor is the last event |
-| Latency view refuses with 422 | a whole channel over more than 24 h | pick a provider; the interface normally does this for you |
-| Ranking tab slow | it scans every provider | it is capped at 6 h with a 1 h default by design |
-| Velocity returns zeros | account outside the 24 h window | use one of the planted chips |
+| Symptom | Action |
+|---|---|
+| API/interface version warning | restart the PoV through the portfolio portal |
+| Atlas not connected | stop; verify `/health` before presenting |
+| Curve is empty after Play | check the API error and `last_error` in `/api/live/status` |
+| Collection says it will be created on Play | press Play once; collection configuration is read back afterwards |

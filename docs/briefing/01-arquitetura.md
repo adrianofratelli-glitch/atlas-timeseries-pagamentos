@@ -5,16 +5,14 @@
 ```
 ┌────────────────────────┐   ┌────────────────────────┐   ┌──────────────────────────┐
 │ React + Vite (5400)    │──▶│ FastAPI (8400)         │──▶│ MongoDB Atlas            │
-│ uPlot · p50/p95/p99    │◀──│ app/db  · data access  │◀──│ time series collection   │
-│ EventSource (SSE)      │   │ app/services · orch.   │   │ $percentile · $densify   │
-│ shared design tokens   │   │ AlertHub · LiveFeed    │   │ $setWindowFields (z)     │
-└────────────────────────┘   └────────────────────────┘   │ Change Streams           │
-                                                          │ ACID transaction         │
-                                                          └──────────────────────────┘
+│ one Play action        │◀──│ LiveFeed · overview    │◀──│ payment_events_live      │
+│ uPlot · 1-second bins  │   │ app/db · data access   │   │ time series + TTL        │
+│ confirmed BSON sample  │   │ measured responses     │   │ live $group/$dateTrunc   │
+└────────────────────────┘   └────────────────────────┘   └──────────────────────────┘
                                                                        ▲
                                                             ┌──────────┴──────────┐
                                                             │ data-generator/     │
-                                                            │ idempotente         │
+                                                            │ synthetic payments  │
                                                             └─────────────────────┘
 ```
 
@@ -86,9 +84,11 @@ reuse the exact production pipelines without installing the web framework.
 
 14. **Live ingestion never touches `payment_events`.** The play button feeds
     `payment_events_live`, a separate collection with a one-hour TTL, and its
-    measurements carry **real** timestamps. Stamping the simulated clock — which
-    continues where the historical base ends, hours in the past — makes the TTL delete
-    the live series within a minute.
+    measurements carry **real** timestamps. The simulated clock is anchored to the
+    historical date but opens at 10:00 on a weekday, so all three rails are visible.
+    Stamping that past clock would make TTL delete the live series within a minute.
+    The live overview also reads the physical bucket containing its frozen latest
+    document, exposing only `meta` and `control.min/max/count/version` as evidence.
 
 15. **Concurrency is capped per class of query, and the excess is refused.**
     `app/services/limits.py` gives the analytic path three slots and the interactive
@@ -113,7 +113,11 @@ reuse the exact production pipelines without installing the web framework.
 | `DAYS` / `EVENTS_PER_SECOND` / `ACCOUNTS` | `7` / `75` / `2000000` | generator |
 | `LIVE_TTL_SECONDS` | `3600` | how long live events survive |
 | `LIVE_TICK_SECONDS` | `1.0` | wall-clock seconds per tick |
-| `LIVE_MINUTES_PER_TICK` | `30` | simulated minutes per tick |
+| `LIVE_MINUTES_PER_TICK` | `5` | simulated minutes per tick |
+| `LIVE_TARGET_EPS` | `300` | demo pace for the complete rail, split across channels |
+| `LIVE_ROLLING_SECONDS` | `15` | smoothing window for the live decline rate |
+| `LIVE_MIN_EVENTS` | `20` | minimum sample in that live window |
+| `LIVE_CONFIDENCE_SIGMAS` | `3.0` | binomial noise margin over the registered baseline |
 | `ARCHIVE_ENABLED` | `false` | turns the lifecycle panel on |
 
 `.env.example` is committed; `.env` is not.

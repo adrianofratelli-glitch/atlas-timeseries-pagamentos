@@ -8,6 +8,26 @@ in `bench-results.json`, `bucket-experiment.json`, `cardinality-experiment.json`
 Re-measure rather than copy forward when the cluster, the volume or the traffic shape
 changes.
 
+## Live stage capacity — 2026-09-03
+
+`tests/live_ingest_capacity.py` drives the exact API behind the Play button: one mixed
+PIX/card/TED `insert_many` per second while `/api/live/overview` aggregates the growing
+60-second window. It never clears data; the collection TTL performs retention.
+
+The ramp used 12-second stages and deliberately queried about four times per second.
+The 60-second holds used the UI cadence of one query after every one-second wait.
+
+| Workload | Confirmed rate | Batch p95 | Concurrent aggregation p95 | Result |
+|---|---:|---:|---:|---|
+| stage default, 60 s | **2 281/s** | **820.8 ms** | **768.2 ms** | 140 718 writes, no errors |
+| upper hold, 60 s | 3 026/s | 1 000.0 ms | 1 129.6 ms | no errors, but no presentation headroom |
+| ramp knee, 12 s | 4 430/s | 1 210.0 ms | 617.2 ms | cycle exceeds the one-second pulse |
+
+The stage default is therefore a **measured presentation operating point**, not the
+cluster maximum. `LIVE_TARGET_EPS=1500` is the daily-mean input to the traffic model;
+the demo starts at 10:00, where the intraday curve produces approximately 2.3 k/s. The
+screen reports the observed confirmed rate, never the nominal input.
+
 ## The two decisions that were measured before any code
 
 ### Bucket span, and the order events are written in

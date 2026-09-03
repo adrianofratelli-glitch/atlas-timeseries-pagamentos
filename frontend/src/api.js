@@ -18,7 +18,15 @@ async function post(path, payload) {
     body: payload ? JSON.stringify(payload) : undefined,
   })
   const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw Object.assign(new Error(body?.detail?.reason ?? res.statusText), { status: res.status, body })
+  if (!res.ok) {
+    const validacao = Array.isArray(body?.detail)
+      ? body.detail.map((item) => `${item.loc?.at(-1) ?? 'campo'}: ${item.msg}`).join('; ')
+      : null
+    throw Object.assign(
+      new Error(body?.detail?.reason ?? validacao ?? res.statusText),
+      { status: res.status, body },
+    )
+  }
   return body
 }
 
@@ -36,10 +44,13 @@ export const api = {
   incidents: () => get('/api/incidents'),
   openIncident: (payload) => post('/api/incidents', payload),
   reset: () => post('/api/demo/reset'),
-  liveStart: (canal, eps) => post('/api/live/start', { canal, eps }),
+  // O backend é a fonte do ritmo validado para este cluster. A tela apenas dispara
+  // o processo único; o throughput exibido continua sendo o observado após o ack.
+  liveStart: () => post('/api/live/start', {}),
   liveDegrade: (provedorId) => post('/api/live/degrade', { provedor_id: provedorId }),
   liveStop: () => post('/api/live/stop'),
   liveStatus: () => get('/api/live/status'),
+  liveOverview: () => get('/api/live/overview'),
   liveHealth: (id) => get(`/api/live/health/${id}`),
   stream: () => new EventSource(`${BASE}/api/alerts/stream`),
 }

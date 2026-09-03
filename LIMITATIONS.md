@@ -6,15 +6,13 @@ architect does.
 
 ## The scope decision
 
-This PoV argues **consolidation**, not throughput. It claims that a payment rail's
-telemetry — a few thousand routes, tens of millions of events, questions that join the
-event to the provider, the account and the incident — is answered well inside the
-operational database, and that what the bank actually pays for today is operating five
-systems rather than saturating any one of them.
+This PoV proves the **mechanism**, not production capacity: a native MongoDB time series
+collection receives live batches and serves a one-second aggregation while those writes
+continue. The collection options, confirmed sample and executed pipeline are visible.
 
-It deliberately does not argue that MongoDB out-ingests a dedicated time series engine.
-That is a different claim, it is not the bottleneck in this workload, and asserting it
-invites a benchmark this demo would lose.
+It deliberately does not argue that MongoDB out-ingests a dedicated time series engine
+or that the displayed rate represents a bank's peak. Those are sizing and benchmark
+questions, and this demo does not answer them.
 
 ## What is not demonstrated
 
@@ -91,9 +89,11 @@ trip, not the database. An earlier round of measurements ran over a VPN and repo
 assumed.
 
 **The live ingestion is a demonstration device.** A single background thread inside the
-API writing a few hundred events per tick from the same synthetic model. It exists so
-the audience can watch events arrive, a provider degrade, an incident open and the data
-expire — not to characterise ingestion capacity.
+API writes one mixed batch of PIX, card and TED events per tick from the same synthetic
+model. The stage operating point was measured at 2 281 confirmed events/s for 60 s while
+the UI aggregation ran concurrently; this validates the presentation on this cluster,
+not production capacity. The observed knee (~4 430/s for 12 s) is explicitly not a sizing
+result or a sustained-throughput claim.
 
 **Two queries do not fit the ceiling, by design.** A whole channel over 7 days is 27 M
 events and exceeds `maxTimeMS`; `latency.serie()` refuses a channel-wide window above

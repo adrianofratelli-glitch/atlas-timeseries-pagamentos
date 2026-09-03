@@ -60,7 +60,16 @@ ARCHIVE_ENABLED = os.getenv("ARCHIVE_ENABLED", "false").lower() == "true"
 # dia sem limpeza manual: o dado ao vivo expira sozinho.
 LIVE_TTL_SECONDS = _int("LIVE_TTL_SECONDS", 3600)
 LIVE_TICK_SECONDS = _float("LIVE_TICK_SECONDS", 1.0)
-LIVE_MINUTES_PER_TICK = _int("LIVE_MINUTES_PER_TICK", 30)
+LIVE_MINUTES_PER_TICK = _int("LIVE_MINUTES_PER_TICK", 5)
+# Média diária do trilho, repartida entre PIX, cartão e TED pelo mesmo modelo da
+# base histórica. A demo abre às 10h e, pela curva intradiária, observa ~2,3 k/s com
+# o padrão de 1,5 k/s. É um ritmo validado para o palco, não um sizing de produção.
+LIVE_TARGET_EPS = _float("LIVE_TARGET_EPS", 1500.0)
+# A tela ganha um ponto por segundo, mas a taxa de recusa usa uma janela móvel para
+# não transformar poucos eventos de um provedor em uma serra ilegível.
+LIVE_ROLLING_SECONDS = _int("LIVE_ROLLING_SECONDS", 15)
+LIVE_MIN_EVENTS = _int("LIVE_MIN_EVENTS", 20)
+LIVE_CONFIDENCE_SIGMAS = _float("LIVE_CONFIDENCE_SIGMAS", 3.0)
 
 # NÃO são medições: são os números do cliente, e a tela os rotula como tais.
 CUSTO_MINUTO_INDISPONIVEL = _float("CUSTO_MINUTO_INDISPONIVEL", 0.0)

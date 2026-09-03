@@ -5,31 +5,26 @@ pelo arquivo de `docs/briefing/` que corresponder à tarefa.
 
 ## O que é
 
-POV de portfólio (dado 100% sintético, provedores fictícios): telemetria do **trilho de
-pagamentos** de um banco digital — PIX, cartão e TED — numa **coleção time series do
-MongoDB Atlas**, com a tese de **consolidação**: o evento, o cadastro do provedor, o
-incidente e a feature de antifraude no mesmo cluster, em vez de banco de séries +
-banco operacional + cache + busca + feature store.
+POV de portfólio com dado 100% sintético: uma prova visual e verificável de que o
+**MongoDB Atlas recebe e agrega uma série temporal enquanto ela nasce**.
 
-Seis coisas, um cluster:
+Uma tela, uma ação, uma tese:
 
-1. **Armazenamento** — mesma amostra em coleção normal e time series, `$collStats` lado
-   a lado, razão medida neste cluster.
-2. **Latência por percentil** — `$percentile` p50/p95/p99 no pipeline sobre evento
-   bruto. Trilho é julgado pela cauda; média esconde quem esperou quatro segundos.
-3. **Lacuna de telemetria** — PSP para de reportar por 40 min, reconstruído com
-   `$densify` + `$fill` dentro do pipeline, ponto sempre rotulado.
-4. **Degradação contra a própria linha de base** — `$setWindowFields` com média e desvio
-   da janela anterior e z-score. O controle negativo (adquirente que recusa 23% de forma
-   estável) **não** pode abrir incidente.
-5. **Velocity da conta** — 1 h/6 h/24 h numa passada só, dentro do orçamento da
-   autorização. `conta_id` é campo de medição indexado, não `metaField` (ADR 0002).
-6. **Ao vivo com degradação injetável** — play alimenta `payment_events_live` (TTL 1 h);
-   "injetar degradação" faz o z subir, o incidente abrir em transação ACID e o alerta
-   chegar por change stream.
+1. **Play** inicia um único processo que grava PIX, cartão e TED misturados em lotes na
+   coleção time series `payment_events_live`.
+2. **Fluxo vivo** mostra apenas lotes já confirmados pelo `insert_many`; o último
+   documento exibido pertence ao mesmo lote.
+3. **Consulta simultânea** agrega eventos por segundo enquanto as escritas continuam e
+   desenha uma janela fixa de 60 s.
+4. **Prova técnica** lê do Atlas `timeField`, `metaField`, TTL e o bucket físico do
+   último evento (`control.min/max/count/version`), além de oferecer o pipeline
+   executado sob demanda.
 
-**Não** prova ingestão no pico real de um banco, time series shardada, nem benchmark
-contra InfluxDB/Prometheus. Ler `LIMITATIONS.md` antes de qualquer apresentação.
+Provedores, detecção, incidentes, velocity, ranking e comparação de armazenamento
+continuam no backend e no material de engenharia, mas não pertencem ao modo palco.
+
+**Não** prova ingestão no pico real de um banco, sizing, time series shardada nem
+benchmark contra InfluxDB/Prometheus. Ler `LIMITATIONS.md` antes de apresentar.
 
 Portas: backend **8400**, frontend **5400**. Banco: `trilho_pagamentos`.
 
@@ -112,6 +107,9 @@ POV_DEV=1 ./start.sh          # HMR + uvicorn --reload
   transação).
 - Ingestão ao vivo escreve em `payment_events_live` com TTL, carimbada com **tempo
   real** — carimbar o relógio simulado faz a TTL apagar a série em menos de um minuto.
+- Há **um** processo de ingestão ao vivo para o trilho completo. PIX, cartão e TED
+  entram no mesmo lote; canal é dimensão do evento e filtro de análise, nunca um
+  seletor de pipeline.
 - O gerador agrupa por rota antes de inserir. Ordem de escrita vale 2× em armazenamento
   (ADR 0001) e agrupar por partição não basta: a unidade contígua tem que ser a série.
 - O gráfico é criado uma vez e recebe `setData`; recriar a cada poll mata cursor e zoom.

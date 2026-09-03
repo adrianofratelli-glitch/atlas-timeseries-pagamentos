@@ -6,28 +6,23 @@ does not, and in what order it was built.
 
 ## What it demonstrates
 
-That a **payment rail's telemetry does not need a separate stack**. The event, the
-provider that routed it, the account that made it, the incident a human opened about it
-and the antifraud feature computed from it all live in one Atlas cluster, reached by one
-driver, in one query language.
+That **MongoDB Atlas can receive and aggregate a native time series while the audience
+watches it being formed**. The stage is intentionally narrower than the engineering
+surface: one collection, one Play action and evidence returned by the connected cluster.
 
 The workload is a digital bank's rail: PIX, card and TED across 44 providers, one
 document per authorised transaction.
 
-Six things, one cluster:
+The visible proof has four parts:
 
-1. **Storage**, measured here — the same events in a plain collection and a time series
-   collection, `$collStats` side by side.
-2. **Latency by percentile** — `$percentile` p50/p95/p99 in the pipeline over raw
-   events. A rail is judged by its tail.
-3. **The telemetry gap** — a PSP stops reporting for forty minutes; `$densify` and
-   `$fill` reconstruct the window inside the pipeline, labelled.
-4. **Degradation against the provider's own baseline** — `$setWindowFields` with a
-   trailing mean and standard deviation excluding the current window, and a z-score.
-5. **Account velocity inside the authorisation** — 1 h / 6 h / 24 h in one pass, with
-   the measured latency next to it.
-6. **Live ingestion with an injectable degradation** — into a separate collection with a
-   one-hour TTL, ending in an ACID incident and a change-stream alert.
+1. one mixed `insert_many` feed into `payment_events_live`;
+2. confirmed batches and a confirmed document moving on screen;
+3. one-second aggregation while writes continue;
+4. collection configuration read back from Atlas, plus the executed pipeline on demand.
+
+The historical queries, anomaly detector, incidents, velocity and storage experiments
+remain valuable engineering assets. They are no longer navigation choices in the stage
+interface because they dilute this proof.
 
 ## What it does not demonstrate
 

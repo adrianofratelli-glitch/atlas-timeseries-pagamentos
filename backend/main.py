@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError, ExecutionTimeout
 
 from app import config
-from app.db import incidents, latency, providers, registry, storage, velocity
+from app.db import incidents, latency, live as live_db, providers, registry, storage, velocity
 from app.db.client import db
 from app.db.ranges import RangeError
 from app.services import limits
@@ -220,8 +220,15 @@ def reset():
 
 # ---------------------------------------------------------------------- ao vivo
 class LiveStart(BaseModel):
-    canal: str = Field(min_length=2, max_length=32)
-    eps: float = Field(default=40.0, gt=0, le=5000)
+    model_config = {"extra": "forbid"}
+
+    # Ritmo do trilho completo. Canal não entra aqui: PIX, cartão e TED são
+    # dimensões dos eventos produzidos pelo mesmo processo. O campo opcional existe
+    # somente para uma interface nova conseguir conversar com a API anterior durante
+    # o reinício; seu valor é deliberadamente ignorado.
+    canal: str | None = Field(default=None, min_length=2, max_length=32,
+                              deprecated=True, exclude=True)
+    eps: float = Field(default=config.LIVE_TARGET_EPS, gt=0, le=5000)
 
 
 class LiveDegrade(BaseModel):
@@ -232,9 +239,7 @@ class LiveDegrade(BaseModel):
 
 @app.post("/api/live/start")
 def live_start(body: LiveStart):
-    if body.canal not in ("pix", "cartao", "ted"):
-        raise HTTPException(status_code=422, detail={"reason": "canal inválido"})
-    return feed.start(body.canal, body.eps)
+    return feed.start(body.eps)
 
 
 @app.post("/api/live/degrade")
@@ -259,10 +264,27 @@ def live_status():
     return feed.status()
 
 
+@app.get("/api/live/overview")
+def live_overview():
+    """Throughput do trilho e configuração real da coleção na mesma fotografia."""
+    # O feed pode confirmar outro lote enquanto a agregação roda. Congelar o estado
+    # aqui garante que bucket e documento exibidos pertencem ao mesmo evento.
+    feed_snapshot = feed.status()
+    payload = _timed(
+        lambda: live_db.overview(
+            feed_snapshot["started_at"], feed_snapshot["last_document"]),
+        "analitico",
+    )
+    payload["feed"] = feed_snapshot
+    return payload
+
+
 @app.get("/api/live/health/{provedor_id}")
 def live_provider_health(provedor_id: str):
-    """Saúde do provedor sobre a coleção ao vivo, em bins de 5 s."""
-    return _timed(lambda: providers.saude_ao_vivo(provedor_id), "analitico")
+    """Série de 1 s e estado da ingestão na mesma fotografia da tela."""
+    payload = _timed(lambda: providers.saude_ao_vivo(provedor_id), "analitico")
+    payload["feed"] = feed.status()
+    return payload
 
 
 # ---------------------------------------------------------------------- alertas

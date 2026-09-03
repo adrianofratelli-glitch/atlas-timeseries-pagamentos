@@ -41,6 +41,25 @@ const MODOS = {
       { key: 'recusa_base', label: 'linha de base (%)', stroke: CORES.base, dash: [5, 4] },
     ],
   },
+  saude_live: {
+    // O throughput fica ao fundo e em outra escala: ele torna cada lote visível
+    // sem distorcer a comparação entre recusa e baseline.
+    windowSeconds: 60,
+    throughputAxis: true,
+    series: [
+      { key: 'eventos', label: 'eventos/s', stroke: CORES.p95, width: 1.5,
+        fill: 'rgba(4, 152, 236, 0.12)', scale: 'throughput' },
+      { key: 'recusa_base', label: 'linha de base (%)', stroke: CORES.base, dash: [5, 4] },
+      { key: 'taxa_recusa', label: 'recusa móvel (%)', stroke: CORES.recusa, width: 2.5 },
+    ],
+  },
+  throughput_live: {
+    windowSeconds: 60,
+    series: [
+      { key: 'eventos', label: 'eventos persistidos/s', stroke: CORES.p95, width: 2.5,
+        fill: 'rgba(4, 152, 236, 0.16)' },
+    ],
+  },
   volume: {
     series: [
       { key: 'eventos', label: 'eventos', stroke: CORES.p95, width: 2 },
@@ -85,15 +104,24 @@ export default function Chart({ mode, points, minHeight = 240, onHover }) {
       padding: [12, 12, 0, 0],
       cursor: { drag: { x: true, y: false } },
       legend: { live: true },
+      scales: spec.throughputAxis ? {
+        throughput: { range: (u, min, max) => [0, Math.max(1, max * 1.15)] },
+      } : {},
       series: [
         { label: 'instante', value: (u, v) => (v == null ? '—' : fmt(v * 1000)) },
         ...spec.series.map((s) => ({
           label: s.label, stroke: s.stroke, width: s.width ?? 2, dash: s.dash,
+          fill: s.fill, scale: s.scale,
         })),
       ],
       axes: [
         { stroke: '#889397', grid: { stroke: 'rgba(61,79,88,0.5)' }, ticks: { stroke: '#3d4f58' } },
-        { stroke: '#889397', grid: { stroke: 'rgba(61,79,88,0.35)' }, ticks: { stroke: '#3d4f58' } },
+        { scale: 'y', stroke: '#889397', grid: { stroke: 'rgba(61,79,88,0.35)' },
+          ticks: { stroke: '#3d4f58' } },
+        ...(spec.throughputAxis ? [{
+          scale: 'throughput', side: 1, stroke: CORES.p95,
+          grid: { show: false }, ticks: { stroke: '#3d4f58' },
+        }] : []),
       ],
       // Leitura do instante sob o cursor: a legenda fica no rodapé e o apresentador
       // precisa do valor junto das métricas, no alto da tela.
@@ -121,8 +149,16 @@ export default function Chart({ mode, points, minHeight = 240, onHover }) {
   // Dado novo não recria o gráfico: só troca a série. Recriar a cada poll matava
   // cursor e zoom no meio da apresentação.
   useEffect(() => {
-    plotRef.current?.setData(dados)
-  }, [dados])
+    const plot = plotRef.current
+    if (!plot) return
+    plot.setData(dados)
+    if (spec.windowSeconds && dados[0].length) {
+      const primeiro = dados[0][0]
+      const ultimo = dados[0].at(-1)
+      const max = Math.max(primeiro + spec.windowSeconds, ultimo)
+      plot.setScale('x', { min: max - spec.windowSeconds, max })
+    }
+  }, [dados, spec])
 
   return <div className="chart-host" ref={hostRef} />
 }
