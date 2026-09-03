@@ -19,6 +19,9 @@ Uma tela, uma ação, uma tese:
 4. **Prova técnica** lê do Atlas `timeField`, `metaField`, TTL e o bucket físico do
    último evento (`control.min/max/count/version`), além de oferecer o pipeline
    executado sob demanda.
+5. **Resultado da bucketização** separa a execução ao vivo do benchmark histórico com
+   o mesmo schema: 44,7 M medições em 2,61 M buckets, 2,26× menos dados por evento e
+   3,73× menos armazenamento total por evento incluindo índices.
 
 Provedores, detecção, incidentes, velocity, ranking e comparação de armazenamento
 continuam no backend e no material de engenharia, mas não pertencem ao modo palco.

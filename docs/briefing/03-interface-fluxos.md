@@ -16,6 +16,7 @@ velocity control belongs to the stage experience.
 │ gerador ── { } { } { } ── lote confirmado ──▶ buckets por rota   │
 │                                                                    │
 │ eventos │ throughput │ confirmação do lote │ agregação no Atlas   │
+│ 44,7 M medições → 2,61 M buckets │ 2,26× dados │ 3,73× total     │
 │                                                                    │
 │ eventos persistidos por segundo ───── curve grows for 60 seconds  │
 │ ▸ Ver query / chamada executada                                    │
@@ -47,6 +48,12 @@ the bucket header comes from `system.buckets.payment_events_live` and exposes on
 
 The aggregation excludes the current, incomplete second. Otherwise the last chart point
 looks like a throughput collapse while its batch is still being written.
+
+The compact bucketization strip is deliberately not live telemetry. It is labelled as a
+measured benchmark using the same schema and reproduces the versioned historical result:
+44,733,964 measurements, 2,613,915 buckets, 17.1 measurements per bucket, 2.26× less
+data per event and 3.73× less total storage per event including indexes. Its sources are
+`queries/bench-results.json` and `queries/benchmarks.md`.
 
 Starting a new session does not drop data. The API records `started_at`, and the live
 aggregation uses the later of that instant or the last 60 seconds. TTL remains the only

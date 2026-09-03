@@ -31,6 +31,12 @@ Let the graph grow for at least 20 seconds. Do not click anything else. The fixe
 60-second window is deliberate: the audience sees the series being formed instead of a
 finished chart stretching to fill its container.
 
+Use the compact strip to connect mechanism to outcome: the live bucket proves how Atlas
+stores a route; the historical benchmark proves the aggregate effect on the same schema.
+Say explicitly that 44.7 M measurements became 2.61 M buckets and used 2.26× less data
+per event, or 3.73× less total storage per event including indexes. Do not present these
+as numbers produced by the short live run.
+
 Point to **Documento confirmado**. It changes only after a successful write. The motion
 is a representation of confirmed batches; it is not an independent frontend animation
 pretending that a write happened.

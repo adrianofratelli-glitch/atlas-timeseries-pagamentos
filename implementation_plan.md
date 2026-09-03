@@ -13,12 +13,14 @@ surface: one collection, one Play action and evidence returned by the connected 
 The workload is a digital bank's rail: PIX, card and TED across 44 providers, one
 document per authorised transaction.
 
-The visible proof has four parts:
+The visible proof has five parts:
 
 1. one mixed `insert_many` feed into `payment_events_live`;
 2. confirmed batches and a confirmed document moving on screen;
 3. one-second aggregation while writes continue;
 4. collection configuration read back from Atlas, plus the executed pipeline on demand.
+5. a compact, explicitly historical benchmark strip connecting 44.7 M measurements to
+   2.61 M physical buckets and the measured per-event storage reduction.
 
 The historical queries, anomaly detector, incidents, velocity and storage experiments
 remain valuable engineering assets. They are no longer navigation choices in the stage

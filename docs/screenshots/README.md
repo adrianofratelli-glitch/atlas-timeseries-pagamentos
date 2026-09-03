@@ -8,7 +8,7 @@ cropped from that same interface state.
 
 | File | Evidence |
 |---|---|
-| `08-prova-ao-vivo.png` | complete stage: confirmed ingestion, throughput, aggregation and bucket |
+| `08-prova-ao-vivo.png` | complete stage: confirmed ingestion, aggregation, physical bucket and measured bucketization result |
 | `09-bucket-fisico.png` | physical bucket header for the latest confirmed document |
 | `10-pipeline-executado.png` | complete aggregation pipeline executed by the chart |
 

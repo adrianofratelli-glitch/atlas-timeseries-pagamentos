@@ -37,6 +37,16 @@ function documentoVisivel(documento) {
 
 const PACOTES = Array.from({ length: 11 }, (_, index) => index)
 
+// Evidência reproduzível da carga histórica versionada em queries/. Não representa
+// a execução curta da tela; os números e o método estão em queries/benchmarks.md.
+const BUCKETIZATION_BENCHMARK = Object.freeze({
+  events: 44_733_964,
+  buckets: 2_613_915,
+  eventsPerBucket: 17.1,
+  dataReduction: 2.26,
+  totalReduction: 3.73,
+})
+
 export default function App() {
   const [health, setHealth] = useState(null)
   const [live, setLive] = useState(null)
@@ -265,6 +275,23 @@ export default function App() {
               <small>janela de 1 segundo</small>
             </article>
           </div>
+
+          <section className="bucketization-result" aria-label="Resultado medido da bucketização">
+            <header>
+              <strong>Resultado da bucketização</strong>
+              <span>benchmark medido · mesmo schema · não é esta execução ao vivo</span>
+            </header>
+            <div className="bucketization-conversion">
+              <span><strong>{numero(BUCKETIZATION_BENCHMARK.events)}</strong> medições</span>
+              <i aria-hidden="true">→</i>
+              <span><strong>{numero(BUCKETIZATION_BENCHMARK.buckets)}</strong> buckets</span>
+              <small>{numero(BUCKETIZATION_BENCHMARK.eventsPerBucket, 1)} medições/bucket</small>
+            </div>
+            <div className="bucketization-gain">
+              <span><strong>{numero(BUCKETIZATION_BENCHMARK.dataReduction, 2)}×</strong> menos dados</span>
+              <span><strong>{numero(BUCKETIZATION_BENCHMARK.totalReduction, 2)}×</strong> menos com índices</span>
+            </div>
+          </section>
 
           <section className="chart-panel">
             <header>

@@ -7,7 +7,7 @@ The stage deliberately has **one screen, one Play button and one claim**. PIX, c
 TED are dimensions of the same payment rail, not three ingestion pipelines. The UI only
 shows values returned after Atlas acknowledges the write.
 
-![Live MongoDB Atlas time series proof showing 2.2k confirmed events per second, concurrent aggregation and the physical bucket for the latest route](docs/screenshots/08-prova-ao-vivo.png)
+![Live MongoDB Atlas time series proof showing confirmed ingestion, concurrent aggregation, physical bucketing and measured storage reduction](docs/screenshots/08-prova-ao-vivo.png)
 
 > All data is synthetic and all providers are fictional. No customer traffic, identity,
 > cluster hostname or connection string is included in this repository.
@@ -30,6 +30,15 @@ screen then reports:
 
 The stage operating point was measured on the shared M20 at **2,281 confirmed events/s**
 for a full 60-second window, with the aggregation running concurrently.
+
+Immediately below the live metrics, a compact evidence strip connects the physical
+mechanism to its measured result on the same schema. It is explicitly labelled as a
+historical benchmark—not as output from the short live run:
+
+```text
+44.7 M measurements → 2.61 M buckets · 17.1 measurements/bucket
+2.26× less data/event · 3.73× less total storage/event including indexes
+```
 
 ### 2 · Watch MongoDB place measurements into buckets
 
